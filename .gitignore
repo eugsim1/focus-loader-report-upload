@@ -1,0 +1,32 @@
+# Local credentials and OCI keys
+.env
+*.env
+!deploy/focus-loader.env.example
+.oci/
+*.pem
+*.key
+Wallet*/
+wallet/
+
+# Runtime state, reports, work files, and logs
+work_report_dir/
+var/
+logs/
+*.log
+*.bad
+*.dsc
+*.download
+
+# Build outputs
+dist/*
+!dist/README.txt
+!dist/SHA256SUMS
+focus-loader-report-upload
+focus-loader-report-upload-linux-*
+.gocache/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

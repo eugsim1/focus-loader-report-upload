@@ -1,0 +1,6 @@
+# Run every hour at minute 17. The wrapper uses flock, so overlapping runs skip.
+# Install with: sudo install -m 0644 deploy/focus-loader.cron.example /etc/cron.d/focus-loader
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+17 * * * * focusloader FOCUS_LOADER_ENV=/etc/focus-loader/focus-loader.env /opt/focus-loader/run-incremental.sh >>/var/log/focus-loader/cron.log 2>&1
