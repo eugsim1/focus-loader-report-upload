@@ -1,0 +1,196 @@
+---
+- name: Build, deploy, and run the OCI FOCUS loader
+  hosts: focus_loader
+  gather_facts: true
+
+  vars:
+    focus_binary: "{{ focus_project_dir }}/dist/focus-loader-report-upload-linux-amd64"
+    focus_sql_scripts_dir: "{{ focus_project_dir }}/sql_scripts"
+    focus_parent_config: "{{ focus_project_dir }}/focus.conf"
+    focus_runtime_environment:
+      CLIENT_HOME: "{{ focus_client_home }}"
+      SQLLDR_PATH: "{{ focus_sqlldr_path }}"
+      PATH: "{{ ansible_env.PATH }}:{{ focus_client_home }}/bin:{{ focus_client_home }}:{{ focus_sqlldr_path }}"
+      LD_LIBRARY_PATH: "{{ focus_client_home }}"
+      TNS_ADMIN: "{{ focus_tns_admin }}"
+
+  tasks:
+    - name: Show non-secret execution settings
+      ansible.builtin.debug:
+        msg:
+          - "Project directory: {{ focus_project_dir }}"
+          - "TNS_ADMIN: {{ focus_tns_admin }}"
+          - "Database alias: {{ focus_db_tns_alias }}"
+          - "Target schema: {{ focus_target_schema }}"
+          - "Namespace: {{ focus_namespace }}"
+          - "Minimum date: {{ focus_minimum_date }}"
+          - "Workers: {{ focus_workers }}"
+          - "Loader authentication: {{ 'OCI Vault secret' if focus_db_secret_id | length > 0 else 'password supplied securely' }}"
+
+    - name: Validate required variables and secrets
+      ansible.builtin.assert:
+        that:
+          - focus_project_dir | length > 0
+          - focus_db_tns_alias | length > 0
+          - focus_target_schema is match('^[A-Za-z][A-Za-z0-9_$#]*$')
+          - focus_namespace | length > 0
+          - focus_workers | int > 0
+          - focus_db_admin_password | length > 0
+          - focus_target_schema_password | length > 0
+          - (focus_db_secret_id | length > 0) or (focus_loader_db_password | length > 0)
+        fail_msg: >-
+          Required values are missing. Export DB_ADMIN_PASSWORD,
+          TARGET_SCHEMA_PASSWORD, and FOCUS_DB_PASSWORD, or provide an
+          encrypted group_vars/all/vault.yml. FOCUS_DB_PASSWORD is not needed
+          when focus_db_secret_id is configured.
+      no_log: true
+
+    - name: Verify project directory exists
+      ansible.builtin.stat:
+        path: "{{ focus_project_dir }}"
+      register: focus_project
+
+    - name: Require project checkout on target
+      ansible.builtin.assert:
+        that:
+          - focus_project.stat.isdir | default(false)
+        fail_msg: "Project checkout not found: {{ focus_project_dir }}"
+
+    - name: Make build and deployment scripts executable
+      ansible.builtin.file:
+        path: "{{ item }}"
+        mode: "0755"
+      loop:
+        - "{{ focus_project_dir }}/build-linux.sh"
+        - "{{ focus_sql_scripts_dir }}/run_deploy_focus_schema_with_sqlloader_audit.sh"
+        - "{{ focus_sql_scripts_dir }}/deploy_focus_schema_with_sqlloader_audit.sh"
+
+    - name: Build Linux binary
+      ansible.builtin.command:
+        argv:
+          - ./build-linux.sh
+        chdir: "{{ focus_project_dir }}"
+      environment: "{{ focus_runtime_environment }}"
+      register: focus_build
+      changed_when: true
+
+    - name: Print build results
+      ansible.builtin.debug:
+        var: focus_build.stdout_lines
+
+    - name: Read loader version
+      ansible.builtin.command:
+        argv:
+          - "{{ focus_binary }}"
+          - -version
+      environment: "{{ focus_runtime_environment }}"
+      register: focus_version
+      changed_when: false
+
+    - name: Print loader version
+      ansible.builtin.debug:
+        var: focus_version.stdout_lines
+
+    - name: Read loader help
+      ansible.builtin.command:
+        argv:
+          - "{{ focus_binary }}"
+          - -help
+      environment: "{{ focus_runtime_environment }}"
+      register: focus_help
+      changed_when: false
+
+    - name: Verify metadata-only preload option exists
+      ansible.builtin.assert:
+        that:
+          - "'skip-preload-content-scan' in focus_help.stdout"
+        success_msg: Loader supports -skip-preload-content-scan.
+        fail_msg: Built loader does not expose -skip-preload-content-scan.
+
+    - name: Deploy schema and update sql_scripts focus.conf
+      ansible.builtin.command:
+        argv:
+          - ./run_deploy_focus_schema_with_sqlloader_audit.sh
+        chdir: "{{ focus_sql_scripts_dir }}"
+      environment: >-
+        {{ focus_runtime_environment | combine({
+          'DB_ADMIN_USER': focus_db_admin_user,
+          'DB_ADMIN_PASSWORD': focus_db_admin_password,
+          'DB_TNS_ALIAS': focus_db_tns_alias,
+          'TARGET_SCHEMA': focus_target_schema,
+          'TARGET_SCHEMA_PASSWORD': focus_target_schema_password,
+          'FOCUS_CONFIG_FILE': focus_sql_scripts_dir + '/focus.conf',
+          'PARENT_CONFIG_FILE': focus_parent_config
+        }) }}
+      register: focus_schema_deploy
+      no_log: true
+
+    - name: Report successful schema deployment
+      ansible.builtin.debug:
+        msg:
+          - "Schema deployment completed with rc={{ focus_schema_deploy.rc }}."
+          - "Working configuration: {{ focus_sql_scripts_dir }}/focus.conf"
+          - "Copied parent configuration: {{ focus_parent_config }}"
+
+    - name: Read copied parent focus.conf metadata
+      ansible.builtin.stat:
+        path: "{{ focus_parent_config }}"
+        checksum_algorithm: sha256
+      register: focus_parent_config_stat
+
+    - name: Read working focus.conf metadata
+      ansible.builtin.stat:
+        path: "{{ focus_sql_scripts_dir }}/focus.conf"
+        checksum_algorithm: sha256
+      register: focus_working_config_stat
+
+    - name: Require identical working and parent configurations
+      ansible.builtin.assert:
+        that:
+          - focus_parent_config_stat.stat.exists
+          - focus_working_config_stat.stat.exists
+          - focus_parent_config_stat.stat.checksum == focus_working_config_stat.stat.checksum
+        success_msg: "focus.conf copied successfully to {{ focus_parent_config }}"
+        fail_msg: Working and parent focus.conf files are missing or different.
+
+    - name: Assemble loader arguments without logging secrets
+      ansible.builtin.set_fact:
+        focus_loader_argv: >-
+          {{
+            [focus_binary,
+             '-c', focus_oci_config,
+             '-t', focus_oci_profile,
+             '-du', focus_target_schema,
+             '-dn', focus_db_tns_alias] +
+            (['-ds', focus_db_secret_id, '-dst', focus_db_secret_profile]
+             if focus_db_secret_id | length > 0
+             else ['-dp', focus_loader_db_password]) +
+            ['-ns', focus_namespace,
+             '-d', focus_minimum_date,
+             '-workers', focus_workers | string,
+             '-ts1', focus_tag_special_1,
+             '-ts2', focus_tag_special_2,
+             '-ts3', focus_tag_special_3,
+             '-ts4', focus_tag_special_4] +
+            (['-preload-report'] if focus_preload_report | bool else []) +
+            (['-skip-preload-content-scan'] if focus_skip_preload_content_scan | bool else []) +
+            (['-skip-tag-rows'] if focus_skip_tag_rows | bool else []) +
+            (['-continue-after-report'] if focus_continue_after_report | bool else [])
+          }}
+      no_log: true
+
+    - name: Run FOCUS loader
+      ansible.builtin.command:
+        argv: "{{ focus_loader_argv }}"
+        chdir: "{{ focus_project_dir }}"
+      environment: "{{ focus_runtime_environment }}"
+      register: focus_loader_run
+      no_log: true
+
+    - name: Print safe loader completion summary
+      ansible.builtin.debug:
+        msg:
+          - "FOCUS loader completed with rc={{ focus_loader_run.rc }}."
+          - "Target schema: {{ focus_target_schema }}"
+          - "Database alias: {{ focus_db_tns_alias }}"
+          - "Namespace: {{ focus_namespace }}"

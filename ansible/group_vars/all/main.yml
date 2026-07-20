@@ -1,0 +1,41 @@
+---
+# Target installation and Oracle client paths.
+focus_project_dir: /home/oracle/focus-loader-report-upload
+focus_client_home: /usr/lib/oracle/current/client64
+focus_sqlldr_path: /usr/lib/oracle/23/client64/bin
+focus_tns_admin: /home/oracle/WalletFinops
+
+# OCI configuration used by the loader.
+focus_oci_config: /home/oracle/.oci/config
+focus_oci_profile: DEFAULT
+
+# Autonomous Database and schema.
+focus_db_admin_user: ADMIN
+focus_db_tns_alias: finops_high
+focus_target_schema: FOCUS_GIT1
+
+# Loader selection and concurrency.
+focus_namespace: bling
+focus_minimum_date: "2026-01-01"
+focus_workers: 5
+focus_tag_special_1: Oracle-Tags.CreatedBy
+focus_tag_special_2: CCA_Basic_Tag.email
+focus_tag_special_3: Oracle_Tags.CreatedBy
+focus_tag_special_4: Oracle_Tags.CreatedOn
+
+focus_preload_report: true
+focus_skip_preload_content_scan: true
+focus_skip_tag_rows: true
+focus_continue_after_report: true
+
+# Prefer an OCI Vault secret for the loader. If this is empty, -dp is used.
+focus_db_secret_id: ""
+focus_db_secret_profile: ""
+
+# These values come from the Ansible controller environment by default.
+# An encrypted group_vars/all/vault.yml can override them.
+focus_db_admin_password: "{{ lookup('ansible.builtin.env', 'DB_ADMIN_PASSWORD') }}"
+focus_target_schema_password: "{{ lookup('ansible.builtin.env', 'TARGET_SCHEMA_PASSWORD') }}"
+focus_loader_db_password: >-
+  {{ lookup('ansible.builtin.env', 'FOCUS_DB_PASSWORD') |
+     default(lookup('ansible.builtin.env', 'TARGET_SCHEMA_PASSWORD'), true) }}

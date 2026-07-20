@@ -25,6 +25,10 @@ focus-loader-report-upload
 focus-loader-report-upload-linux-*
 .gocache/
 
+# Local Ansible inventory and encrypted/plaintext secret variables
+ansible/inventory/hosts.yml
+ansible/group_vars/all/vault.yml
+
 # Editors and operating systems
 .vscode/
 .idea/

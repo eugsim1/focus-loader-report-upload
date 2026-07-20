@@ -1,0 +1,13 @@
+---
+all:
+  children:
+    focus_loader:
+      hosts:
+        private_oracle_server:
+          ansible_host: 192.0.2.10
+          ansible_user: oracle
+          ansible_ssh_private_key_file: /home/controller/.ssh/oracle_private_key
+          # Add the ProxyCommand generated for the active OCI Bastion session:
+          # ansible_ssh_common_args: >-
+          #   -o ProxyCommand="ssh -i /home/controller/.ssh/oracle_private_key
+          #   -W %h:%p -p 22 SESSION_OCID@host.bastion.REGION.oci.oraclecloud.com"

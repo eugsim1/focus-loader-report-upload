@@ -14,6 +14,10 @@ This Go application retrieves OCI FOCUS cost reports from Object Storage, transf
 - generate pre-load detail, summary, and capacity-planning reports;
 - run incrementally from cron with durable load and upload checkpoints.
 
+An [Ansible project](ansible/README.md) is included to build the Linux binary,
+deploy the target schema, synchronize `focus.conf`, and run the loader using
+variable-driven settings and protected secrets.
+
 The source prefix is `FOCUS Reports/`. Destination object names preserve the source path and remove only the final `.gz` suffix.
 
 > Important: the current application connects to Oracle Database in every mode, including upload-only and pre-load reporting. Upload-only skips SQL*Loader and database writes, but database credentials, wallet/network configuration, and the configured load-status table must still be available.

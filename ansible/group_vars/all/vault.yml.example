@@ -1,0 +1,6 @@
+---
+# Copy to vault.yml, replace the values, then encrypt the file:
+# ansible-vault encrypt group_vars/all/vault.yml
+focus_db_admin_password: CHANGE_ME
+focus_target_schema_password: CHANGE_ME
+focus_loader_db_password: CHANGE_ME
