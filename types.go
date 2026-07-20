@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.5.1-go-incremental-upload"
+	version       = "26.5.2-sanitized-sql-distribution"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

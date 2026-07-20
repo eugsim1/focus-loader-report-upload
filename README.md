@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.5.1-go-incremental-upload`
+Version `26.5.2-sanitized-sql-distribution`
 
 > **Independent project disclaimer**
 >

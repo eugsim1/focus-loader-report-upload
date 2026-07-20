@@ -1,23 +1,20 @@
-# Release 26.5.1-go-incremental-upload
+# Release 26.5.2-sanitized-sql-distribution
 
 ## Highlights
 
-- Adds a durable upload-only checkpoint through `-upload-state-file`.
-- Keeps upload-only history independent from Oracle load history, allowing an already-loaded source object to be copied to a new destination bucket.
-- Retains the immediate one-row latest-upload CSV and full per-run upload results CSV.
-- Adds a production-oriented cron wrapper with `flock`, persistent state, OCI Vault support, and explicit Oracle runtime paths.
-- Replaces legacy environment-specific helpers with sanitized deployment examples.
-- Provides a comprehensive Linux installation, build, configuration, usage, cron, recovery, security, and troubleshooting guide.
-- Documents the complete enrichment contract and every command-line flag, including defaults, interactions, and limitations.
-- Includes editable and rendered OCI architecture diagrams for Object Storage delivery and Autonomous Database loading.
+- Adds a reusable `sql_scripts` package for deploying the FOCUS schema and SQL*Loader audit objects.
+- Replaces deployment-specific values with documented environment variables and safe placeholders.
+- Includes pre-load and post-load helpers, index maintenance, schema deployment, and OCI FOCUS inspection utilities.
+- Adds a sanitization report, security guidance, `.env.example`, and ignore rules for credentials and generated files.
+- Retains all application and incremental-upload capabilities from version 26.5.1.
 
 ## Upgrade notes
 
 1. Back up existing `work_report_dir` state and reports.
-2. Deploy the new binary together with the updated `focus.conf` and `focus.ctl`.
-3. For upload-only schedules, choose a persistent `-upload-state-file`. Use a different state file for every independent destination bucket/prefix.
-4. Do not use `-force` for the first upgraded cron run unless every source object must be replayed.
-5. Test the cron wrapper twice; the second run should find no pending upload-only objects unless a new source object arrived.
+2. Review `sql_scripts/README.md` and copy `sql_scripts/.env.example` to a local, untracked environment file.
+3. Supply database credentials and OCI identifiers through the documented environment variables; do not commit them.
+4. Validate the scripts against a non-production schema before deployment.
+5. Existing 26.5.1 application configuration and checkpoint files remain compatible.
 
 ## Compatibility
 

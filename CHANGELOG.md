@@ -1,5 +1,11 @@
 # Changelog
 
+## 26.5.2-sanitized-sql-distribution
+
+- Added a reusable, sanitized `sql_scripts` deployment package for Oracle schemas and SQL*Loader auditing.
+- Added documented environment templates and configuration examples without deployment-specific credentials or OCI identifiers.
+- Added security guidance, a sanitization report, and repository safeguards for local secrets and generated artifacts.
+
 ## 26.5.1-go-incremental-upload
 
 - Added `-upload-state-file` for durable upload-only restart tracking.
