@@ -452,3 +452,17 @@ EOF_CONFIG
 fi
 
 echo "Done. Objects are schema-qualified under ${SCHEMA} and focus.conf points to that schema."
+
+# The configuration in sql_scripts is the working copy. After it has been
+# updated successfully, synchronize the final file to the parent application
+# directory. Override the destination with PARENT_CONFIG_FILE when needed.
+PARENT_CONFIG_FILE=${PARENT_CONFIG_FILE:-$script_dir/../focus.conf}
+SOURCE_CONFIG_ABS=$(readlink -f "$CONFIG_FILE")
+PARENT_CONFIG_ABS=$(readlink -m "$PARENT_CONFIG_FILE")
+
+if [ "$SOURCE_CONFIG_ABS" != "$PARENT_CONFIG_ABS" ]; then
+  cp -p "$CONFIG_FILE" "$PARENT_CONFIG_FILE"
+  echo "Config file copied to parent: $PARENT_CONFIG_FILE"
+else
+  echo "Parent config already resolves to working config: $PARENT_CONFIG_FILE"
+fi

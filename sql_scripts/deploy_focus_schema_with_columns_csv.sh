@@ -456,7 +456,7 @@ echo "Database objects are schema-qualified under ${SCHEMA} and focus.conf point
 
 # Keep the parent application directory synchronized with the configuration
 # updated above. Override this location with PARENT_CONFIG_FILE if needed.
-PARENT_CONFIG_FILE=${PARENT_CONFIG_FILE:-$CONFIG_FILE}
+PARENT_CONFIG_FILE=${PARENT_CONFIG_FILE:-$script_dir/../focus.conf}
 SOURCE_CONFIG_ABS=$(readlink -f "$CONFIG_FILE")
 PARENT_CONFIG_ABS=$(readlink -m "$PARENT_CONFIG_FILE")
 if [ "$SOURCE_CONFIG_ABS" != "$PARENT_CONFIG_ABS" ]; then

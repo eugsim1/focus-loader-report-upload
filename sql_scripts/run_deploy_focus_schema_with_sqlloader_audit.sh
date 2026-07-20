@@ -11,4 +11,5 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${TARGET_SCHEMA_PASSWORD:?Set TARGET_SCHEMA_PASSWORD}"
 
 export FOCUS_CONFIG_FILE="${FOCUS_CONFIG_FILE:-$script_dir/focus.conf}"
-exec "$script_dir/deploy_focus_schema_with_columns_csv.sh"
+export PARENT_CONFIG_FILE="${PARENT_CONFIG_FILE:-$script_dir/../focus.conf}"
+exec "$script_dir/deploy_focus_schema_with_sqlloader_audit.sh"

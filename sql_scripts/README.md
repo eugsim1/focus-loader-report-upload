@@ -24,6 +24,11 @@ source ./.env
 set +a
 ```
 
+`run_deploy_focus_schema_with_sqlloader_audit.sh` first updates
+`sql_scripts/focus.conf`, then copies the completed configuration to
+`../focus.conf`. Set `PARENT_CONFIG_FILE=/another/path/focus.conf` to override
+the parent destination.
+
 Do not pass passwords as command-line arguments because they can appear in the
 process list and shell history.
 
