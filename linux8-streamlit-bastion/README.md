@@ -46,6 +46,43 @@ sudo systemctl status sshd
 In the OCI Console, open the instance's **Oracle Cloud Agent** page and verify
 that the **Bastion** plugin is enabled and running.
 
+### Least-privilege access to an Oracle-owned `tnsnames.ora`
+
+If `TNS_ADMIN=/home/oracle/adb_wallet` and the wallet must remain owned by
+`oracle`, grant `focusloader` access only to the directory path and
+`tnsnames.ora`:
+
+```bash
+sudo dnf install -y acl
+
+sudo chmod 0700 /home/oracle/adb_wallet
+sudo chmod 0600 /home/oracle/adb_wallet/tnsnames.ora
+
+# Allow focusloader to traverse the two directories.
+sudo setfacl -m u:focusloader:--x /home/oracle
+sudo setfacl -m u:focusloader:--x /home/oracle/adb_wallet
+
+# Allow reading only tnsnames.ora.
+sudo setfacl -m u:focusloader:r-- \
+  /home/oracle/adb_wallet/tnsnames.ora
+```
+
+Verify the effective access before running the installer:
+
+```bash
+sudo -u focusloader test -r /home/oracle/adb_wallet/tnsnames.ora
+sudo -u focusloader head -n 1 /home/oracle/adb_wallet/tnsnames.ora
+sudo getfacl -p /home/oracle /home/oracle/adb_wallet \
+  /home/oracle/adb_wallet/tnsnames.ora
+```
+
+An `ls /home/oracle/adb_wallet` command may still return `Permission denied`.
+That is expected: directory traversal (`--x`) permits opening the explicitly
+named file but does not permit listing the wallet directory. This ACL is enough
+for the read-only TNS alias service; a process that connects to the database
+may require access to additional wallet files and should use a separately
+reviewed permission policy.
+
 ## 2. Copy the source and install the UI
 
 Copy or clone this complete repository onto the server; the installer uses the

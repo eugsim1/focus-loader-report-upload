@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.5.9-windows-auth-packages`
+Version `26.5.10-wallet-acl-guidance`
 
 > **Independent project disclaimer**
 >
@@ -140,6 +140,10 @@ when the tunnel closes. Complete installation, laptop prerequisites, manual
 deployment, systemd, API, upgrade, rollback, and troubleshooting steps are in
 [`linux8-streamlit-bastion/README.md`](linux8-streamlit-bastion/README.md) and
 [`streamlit-ui/README.md`](streamlit-ui/README.md).
+
+Both installation guides include a least-privilege ACL procedure for the case
+where `TNS_ADMIN=/home/oracle/adb_wallet` remains owned by `oracle` while the
+read-only alias service runs as `focusloader`.
 
 Two complete Windows authentication wrappers are also available:
 

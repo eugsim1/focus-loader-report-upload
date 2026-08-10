@@ -1,5 +1,13 @@
 # Changelog
 
+## 26.5.10-wallet-acl-guidance
+
+- Documented the exact Oracle Linux 8 ACL commands that let `focusloader`
+  traverse an Oracle-owned wallet path and read only `tnsnames.ora`.
+- Added verification commands and clarified that directory listing remains
+  denied intentionally, while full database connections may need separately
+  reviewed access to additional wallet files.
+
 ## 26.5.9-windows-auth-packages
 
 - Added a standalone Windows browser-authentication launcher that creates or

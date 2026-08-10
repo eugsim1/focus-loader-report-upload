@@ -185,6 +185,39 @@ sudo -u focusloader namei -l "$TNS_ADMIN/tnsnames.ora"
 Grant only the required group traversal/read permissions. Do not make a wallet
 world-readable.
 
+For the common case where `TNS_ADMIN=/home/oracle/adb_wallet` remains owned by
+`oracle`, install the ACL tools and grant access only to the named file:
+
+```bash
+sudo dnf install -y acl
+
+sudo chmod 0700 /home/oracle/adb_wallet
+sudo chmod 0600 /home/oracle/adb_wallet/tnsnames.ora
+
+# Allow focusloader to traverse the two directories.
+sudo setfacl -m u:focusloader:--x /home/oracle
+sudo setfacl -m u:focusloader:--x /home/oracle/adb_wallet
+
+# Allow reading only tnsnames.ora.
+sudo setfacl -m u:focusloader:r-- \
+  /home/oracle/adb_wallet/tnsnames.ora
+```
+
+Verify the resulting access:
+
+```bash
+sudo -u focusloader test -r /home/oracle/adb_wallet/tnsnames.ora
+sudo -u focusloader head -n 1 /home/oracle/adb_wallet/tnsnames.ora
+sudo getfacl -p /home/oracle /home/oracle/adb_wallet \
+  /home/oracle/adb_wallet/tnsnames.ora
+```
+
+It is intentional that `focusloader` can traverse the wallet directory but
+cannot list it, so `ls /home/oracle/adb_wallet` may still fail for that user.
+This narrowly scoped ACL supports the read-only alias service. Full database
+connections can require additional wallet files; grant those separately only
+after reviewing the loader's runtime requirements.
+
 ## 3A. Automated installation
 
 Review the installer before running it. It copies the UI, creates an isolated
