@@ -43,6 +43,9 @@ func run(ctx context.Context) error {
 		fmt.Printf("%s %s\n", filepath.Base(os.Args[0]), version)
 		return nil
 	}
+	if cmd.tnsGUI {
+		return runTNSGUI(ctx, cmd.tnsGUIListen)
+	}
 
 	if cmd.dbUser == "" || cmd.dbName == "" || (cmd.dbPassword == "" && cmd.dbSecretID == "") {
 		printUsage()

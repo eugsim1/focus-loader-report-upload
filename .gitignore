@@ -16,6 +16,8 @@ logs/
 *.bad
 *.dsc
 *.download
+.gomodcache/
+.gopath/
 
 # Build outputs
 dist/*

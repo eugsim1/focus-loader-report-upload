@@ -1,5 +1,12 @@
 # Changelog
 
+## 26.5.3-tns-gui
+
+- Added `-tns-gui`, a lightweight read-only browser interface compiled into the existing Go binary.
+- Added safe parsing of the first alias in `$TNS_ADMIN/tnsnames.ora`, including comments, alias groups, multiline aliases, and `IFILE` skipping.
+- Added a loopback-only default listener, JSON status endpoint, request timeouts, browser security headers, and parser/HTTP tests.
+- Added Oracle Linux 8 systemd environment/unit examples and a complete deployment, SSH-tunnel, security, and troubleshooting guide.
+
 ## 26.5.2-sanitized-sql-distribution
 
 - Added a reusable, sanitized `sql_scripts` deployment package for Oracle schemas and SQL*Loader auditing.

@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.5.2-sanitized-sql-distribution`
+Version `26.5.3-tns-gui`
 
 > **Independent project disclaimer**
 >
@@ -12,6 +12,7 @@ This Go application retrieves OCI FOCUS cost reports from Object Storage, transf
 - upload the transformed CSV files to another OCI Object Storage bucket without SQL*Loader;
 - upload each transformed CSV and then load it;
 - generate pre-load detail, summary, and capacity-planning reports;
+- display the first `$TNS_ADMIN/tnsnames.ora` alias in a lightweight, read-only browser interface;
 - run incrementally from cron with durable load and upload checkpoints.
 
 An [Ansible project](ansible/README.md) is included to build the Linux binary,
@@ -20,7 +21,7 @@ variable-driven settings and protected secrets.
 
 The source prefix is `FOCUS Reports/`. Destination object names preserve the source path and remove only the final `.gz` suffix.
 
-> Important: the current application connects to Oracle Database in every mode, including upload-only and pre-load reporting. Upload-only skips SQL*Loader and database writes, but database credentials, wallet/network configuration, and the configured load-status table must still be available.
+> Important: loader, upload-only, and pre-load modes connect to Oracle Database. The read-only `-tns-gui` mode is the exception: it reads only `$TNS_ADMIN/tnsnames.ora` and requires neither database nor OCI credentials.
 
 ## Goal of this utility
 
@@ -103,6 +104,7 @@ The editable diagram embeds Object Storage, Compute VM, IAM, Vault, and Autonomo
 - [OCI authentication and IAM](#oci-authentication-and-iam)
 - [Database setup](#database-setup)
 - [Build and test](#build-and-test)
+- [Read-only TNS alias GUI](README_TNS_GUI.md)
 - [Complete command-line flag reference](#complete-command-line-flag-reference)
 - [Usage examples](#usage-examples)
 - [Cron-based incremental retrieval](#cron-based-incremental-retrieval)
@@ -119,6 +121,7 @@ The editable diagram embeds Object Storage, Compute VM, IAM, Vault, and Autonomo
 | Upload and load | upload flags plus `-load-after-upload` | Uploads each transformed CSV and runs SQL*Loader only after that upload succeeds. |
 | Pre-load report | `-preload-report` | Creates reports and stops unless `-continue-after-report` is supplied. |
 | Metadata-only report | `-skip-preload-content-scan` | Avoids report-time object download/decompression/row counting. |
+| TNS alias GUI | `-tns-gui` | Starts a read-only browser page showing the first alias from `$TNS_ADMIN/tnsnames.ora`; skips database and OCI initialization. |
 
 Pipeline:
 
@@ -470,6 +473,8 @@ All relative paths are resolved from the process working directory. The supplied
 | `-workers` | Integer, default `1` | Number of files processed concurrently. Must be at least 1 and is capped internally to the number of pending objects. More workers increase OCI requests, local disk usage, memory, Oracle sessions, and SQL*Loader pressure. Start with 1–4 and measure. |
 | `-verbose` | Boolean, default `false` | Prints detailed per-file pre-load inspection and transformed-upload progress. Without it, upload progress is printed periodically and at completion. Useful for diagnosis but can create large cron logs. |
 | `-keep-work-files` | Boolean, default `false` | Retains downloaded gzip files and generated CSV/control artifacts after successful processing. Normally successful work files are removed. Failure artifacts may remain even without this flag so they can be investigated. Plan disk capacity before enabling it. |
+| `-tns-gui` | Boolean, default `false` | Starts the built-in read-only TNS alias web page and exits before database/OCI validation. It reads the first alias from `$TNS_ADMIN/tnsnames.ora`. |
+| `-tns-gui-listen` | String, default `127.0.0.1:8080` | Listener used with `-tns-gui`. Keep the loopback default and reach it through SSH; a non-loopback listener has no built-in authentication. |
 
 ### OCI authentication, source location, and networking
 
@@ -552,7 +557,7 @@ Checkpoint files are target state, not disposable cache. Back them up and never 
 - `-skip-tags` implies both `-skip-tag-rows` and `-skip-tag-keys`.
 - `-skip-preload-content-scan` automatically enables `-preload-report` only when upload mode is not enabled.
 - `-workers` must be at least 1.
-- Database credentials are validated before OCI discovery in every mode.
+- Database credentials are validated before OCI discovery in all data-processing modes. `-tns-gui` is read-only and bypasses both validations.
 - `-force` overrides processed-file filtering but does not disable exact `-f` or minimum-date `-d` filtering.
 
 Run `./focus-loader-report-upload -h` after every upgrade; the executable's help output is the authoritative parser-level option list.
@@ -567,6 +572,24 @@ Examples use Vault and instance principals. Replace all placeholders.
 ./focus-loader-report-upload -version
 ./focus-loader-report-upload -h
 ```
+
+### Read the first TNS alias in a browser
+
+```bash
+export TNS_ADMIN=/opt/oracle/wallet
+./focus-loader-report-upload -tns-gui
+```
+
+The service listens on `127.0.0.1:8080` by default. From a workstation, use an
+SSH tunnel and open `http://127.0.0.1:8080/`:
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 opc@SERVER_IP
+```
+
+No `-du`, `-dn`, password, secret, or OCI authentication flag is required.
+See [README_TNS_GUI.md](README_TNS_GUI.md) for Oracle Linux 8 systemd setup,
+security guidance, Bastion access, API output, and troubleshooting.
 
 ### Pre-load report and stop
 
@@ -870,6 +893,8 @@ The included `.github/workflows/ci.yml` runs module verification, tests, and a L
 
 ## Additional documentation
 
+- `Location.md`: documentation-safe local project location; the project itself was not moved.
+- `README_TNS_GUI.md`: read-only TNS alias GUI, Oracle Linux 8 service installation, SSH access, and troubleshooting.
 - `README_REPORT_UPLOAD.md`: transformed upload behavior and report schema.
 - `README_PRELOAD_REPORT.md`: pre-load and capacity report details.
 - `CHANGELOG.md`: release history.

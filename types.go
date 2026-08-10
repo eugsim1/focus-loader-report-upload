@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.5.2-sanitized-sql-distribution"
+	version       = "26.5.3-tns-gui"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )
@@ -56,6 +56,8 @@ type commandLine struct {
 	loadAfterUpload        bool
 	verbose                bool
 	skipPreloadContentScan bool
+	tnsGUI                 bool
+	tnsGUIListen           string
 	showVersion            bool
 }
 
