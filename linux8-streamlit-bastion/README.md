@@ -1,0 +1,160 @@
+# Oracle Linux 8 Streamlit deployment through OCI Bastion
+
+This deployment package uses the existing `../streamlit-ui` application.  It
+does not expose Streamlit on the VCN or the public internet.  The application
+listens only on `127.0.0.1:8501` on the Linux server, and the laptop reaches it
+through a local SSH forward over an OCI Bastion **managed SSH** session.
+
+## Result
+
+```text
+Laptop browser --> http://127.0.0.1:8501
+                    |
+                    | SSH local forward over OCI Bastion
+                    v
+Oracle Linux 8 private IP --> 127.0.0.1:8501 Streamlit
+                               127.0.0.1:8080 FOCUS Loader API
+```
+
+Do not add an ingress rule for TCP 8501 or TCP 8080.  Do not change either
+service to listen on the server private IP or `0.0.0.0`.
+
+## 1. Prerequisites
+
+On the Oracle Linux 8 server, ensure that:
+
+- Oracle Linux is 8.8 or later.
+- The server has a private IP and can be reached from an OCI Bastion in the
+  same VCN (or through permitted VCN routing).
+- `sshd`, the Oracle Cloud Agent, and the Bastion plugin are running.  These
+  are required for an OCI Bastion managed SSH session.
+- The service account and installed FOCUS Loader binary exist:
+  `/opt/focus-loader/focus-loader-report-upload`.
+- The `focusloader` account can read the required `tnsnames.ora` file.
+- The server can reach your approved Python package repository during setup.
+
+On the server, run:
+
+```bash
+sudo dnf install -y python3.11 python3.11-pip curl
+sudo useradd --system --create-home --shell /bin/bash focusloader 2>/dev/null || true
+python3.11 --version
+sudo systemctl status oracle-cloud-agent
+sudo systemctl status sshd
+```
+
+In the OCI Console, open the instance's **Oracle Cloud Agent** page and verify
+that the **Bastion** plugin is enabled and running.
+
+## 2. Copy the source and install the UI
+
+Copy or clone this complete repository onto the server; the installer uses the
+existing `streamlit-ui`, `deploy`, and `scripts` folders.  For example, after
+copying it to `/opt/focus-loader/src`:
+
+```bash
+cd /opt/focus-loader/src
+
+# Build and install the backend that supplies the local read-only API.
+go mod download
+go mod verify
+CGO_ENABLED=1 go test ./...
+CGO_ENABLED=1 go build -buildvcs=false -trimpath \
+  -o dist/focus-loader-report-upload .
+sudo install -o focusloader -g focusloader -m 0750 \
+  dist/focus-loader-report-upload /opt/focus-loader/focus-loader-report-upload
+
+# Replace this with the directory that contains tnsnames.ora on your server.
+sudo TNS_ADMIN=/opt/oracle/wallet PYTHON_BIN=python3.11 \
+  ./scripts/install-streamlit-ui.sh
+```
+
+The installer creates two services:
+
+- `focus-loader-tns-gui.service`: local FOCUS Loader API on `127.0.0.1:8080`.
+- `focus-loader-streamlit.service`: Streamlit UI on `127.0.0.1:8501`.
+
+It also creates a dedicated Python virtual environment at
+`/opt/focus-loader/streamlit-ui/.venv`.
+
+Validate from the Linux server:
+
+```bash
+sudo systemctl --no-pager --full status focus-loader-tns-gui.service
+sudo systemctl --no-pager --full status focus-loader-streamlit.service
+curl -fsS http://127.0.0.1:8080/api/v1/health
+curl -fsS http://127.0.0.1:8501/_stcore/health
+sudo ss -ltnp | grep -E ':(8080|8501)\\b'
+```
+
+Both listeners must show `127.0.0.1`, not the server's private IP.
+
+## 3. Create an OCI Bastion managed SSH session
+
+In OCI Console:
+
+1. Open **Identity & Security → Bastion**, then choose the bastion in the VCN.
+2. Select **Create session** → **Managed SSH session**.
+3. Select this Oracle Linux instance as the target and use port `22`.
+4. Specify the OS user (normally `opc`) and upload the public SSH key for your
+   laptop.
+5. Choose the required time-to-live, create the session, then wait until it is
+   active.
+6. In the session menu, choose **Copy SSH command**.
+
+OCI creates a time-limited command that includes the correct bastion endpoint,
+session identity, and key options.  Use that copied command as the source of
+truth rather than replacing it with a guessed bastion hostname.
+
+## 4. Open Streamlit on the laptop
+
+On the laptop, take the SSH command copied from the managed-SSH session and
+add these options immediately after `ssh`:
+
+```text
+-N -L 8501:127.0.0.1:8501 -o ServerAliveInterval=120 -o ServerAliveCountMax=3
+```
+
+For example, the final command retains every option supplied by OCI but has
+this shape:
+
+```bash
+ssh -N -L 8501:127.0.0.1:8501 \
+  -o ServerAliveInterval=120 -o ServerAliveCountMax=3 \
+  <the-rest-of-the-command-copied-from-the-OCI-managed-SSH-session>
+```
+
+Keep that terminal open.  Then open this URL on the laptop:
+
+```text
+http://127.0.0.1:8501/
+```
+
+If port 8501 is already occupied on the laptop, choose another local port such
+as 18501 while keeping the remote destination unchanged:
+
+```bash
+ssh -N -L 18501:127.0.0.1:8501 <the-rest-of-the-OCI-command>
+```
+
+Then browse to `http://127.0.0.1:18501/`.
+
+## 5. Troubleshooting
+
+```bash
+# On the server
+sudo journalctl -u focus-loader-streamlit.service -n 100 --no-pager
+sudo journalctl -u focus-loader-tns-gui.service -n 100 --no-pager
+sudo -u focusloader test -r /opt/oracle/wallet/tnsnames.ora
+
+# On the laptop: check whether the local forward is listening
+netstat -ano | findstr :8501
+```
+
+If the managed session cannot be created, confirm the Oracle Cloud Agent and
+Bastion plugin status, the instance network route/security rules from the
+Bastion subnet to the server's port 22, and that the laptop public IP is in the
+Bastion CIDR allowlist.  The Streamlit ports do not need network rules.
+
+For application details, service hardening, manual installation, and rollback,
+read [`../streamlit-ui/README.md`](../streamlit-ui/README.md).

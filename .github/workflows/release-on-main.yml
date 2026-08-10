@@ -1,0 +1,74 @@
+name: release-on-main
+
+on:
+  workflow_run:
+    workflows: [linux-ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Prepare release metadata from the changelog
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(awk '/^## / { print $2; exit }' CHANGELOG.md)
+          if [[ -z "${version}" ]]; then
+            echo "CHANGELOG.md has no version heading" >&2
+            exit 1
+          fi
+
+          short_sha=${{ github.event.workflow_run.head_sha }}
+          short_sha=${short_sha:0:7}
+          tag="v${version}-${short_sha}"
+          title="${version} (${short_sha})"
+
+          notes_file="${RUNNER_TEMP}/release-notes.md"
+          awk '
+            /^## / {
+              if (found) exit
+              found=1
+              next
+            }
+            found { print }
+          ' CHANGELOG.md > "${notes_file}"
+
+          if ! grep -q '[^[:space:]]' "${notes_file}"; then
+            echo "The newest CHANGELOG.md section has no release notes" >&2
+            exit 1
+          fi
+
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "title=${title}" >> "${GITHUB_OUTPUT}"
+          echo "notes_file=${notes_file}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create one release for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.metadata.outputs.title }}
+          RELEASE_NOTES_FILE: ${{ steps.metadata.outputs.notes_file }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; nothing to do."
+            exit 0
+          fi
+          gh release create "${RELEASE_TAG}" \
+            --target "${RELEASE_SHA}" \
+            --title "${RELEASE_TITLE}" \
+            --notes-file "${RELEASE_NOTES_FILE}"

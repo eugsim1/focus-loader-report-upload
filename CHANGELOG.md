@@ -1,5 +1,11 @@
 # Changelog
 
+## 26.5.5-linux8-bastion
+
+- Added a focused Oracle Linux 8 deployment guide for the existing Streamlit interface.
+- Documented secure laptop access through an OCI Bastion managed SSH session without exposing ports 8080 or 8501.
+- Added automatic GitHub releases for every successfully tested update to `main`, using the newest changelog section as the release notes.
+
 ## 26.5.4-streamlit
 
 - Added a separate Streamlit frontend with TNS alias selection, backend diagnostics, and a validated loader-command builder.
