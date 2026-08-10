@@ -109,8 +109,11 @@ is supplied.
 ## One-line CMD invocation
 
 ```cmd
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\windows-api-key-auth-streamlit\connect-streamlit-api-key-auth.ps1" -BastionId "ocid1.bastion.oc1.eu-frankfurt-1.REPLACE" -InstanceId "ocid1.instance.oc1.eu-frankfurt-1.REPLACE" -PrivateIp "10.30.1.10" -Region "eu-frankfurt-1" -SshPrivateKeyPath "C:\Users\YOUR_USER\.ssh\bastion_ed25519" -OciUserId "ocid1.user.oc1..REPLACE" -OciTenancyId "ocid1.tenancy.oc1..REPLACE" -ApiKeyFingerprint "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99" -ApiPrivateKeyPath "C:\Users\YOUR_USER\.oci\oci_api_key.pem" -ProfileName "STREAMLIT_API_KEY"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-api-key-auth-streamlit\connect-streamlit-api-key-auth.ps1" -BastionId "ocid1.bastion.oc1.eu-frankfurt-1.amaaaaaattkvkkiavieclqbepigrnbctut4ievpfm77c2yua3i26ngvegjfa" -InstanceId "ocid1.instance.oc1.eu-frankfurt-1.antheljrttkvkkicjuge3ytieelol5jnyuqa23em37zb7jrucmub7kkuitia" -PrivateIp "10.30.1.159" -Region "eu-frankfurt-1" -SshPrivateKeyPath "C:\Users\root\.ssh\key_03-05-23-17-28" -OciUserId "ocid1.user.oc1..aaaaaaaa2igcu3ynk6fuaber7376plhj546xrb6g4yy3clb4ivimm63jehrq" -OciTenancyId "ocid1.tenancy.oc1..aaaaaaaaxzpxbcag7zgamh2erlggqro3y63tvm2rbkkjz4z2zskvagupiz7a" -ApiKeyFingerprint "03:fe:04:88:48:aa:ce:7b:6b:5c:da:74:63:a0:1d:38" -ApiPrivateKeyPath "C:\eugene\git-oracle\.oci\eugene.simos@2026-06-30T08_13_22.130Z.pem" -ProfileName "STREAMLIT_API_KEY"
 ```
+
+This command contains deployment-specific OCIDs and local paths. Keep the PEM
+private key itself only on the laptop and never add it to the repository.
 
 ## Dry run
 

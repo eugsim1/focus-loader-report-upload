@@ -1,5 +1,12 @@
 # Changelog
 
+## 26.5.11-api-key-one-line-command
+
+- Updated the Windows API-key authentication guide with the complete validated
+  one-line `powershell.exe -File` command for the current deployment.
+- Corrected the Compute instance OCID quoting and retained the warning that the
+  referenced private key must remain local and uncommitted.
+
 ## 26.5.10-wallet-acl-guidance
 
 - Documented the exact Oracle Linux 8 ACL commands that let `focusloader`

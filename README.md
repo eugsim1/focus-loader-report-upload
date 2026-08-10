@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.5.10-wallet-acl-guidance`
+Version `26.5.11-api-key-one-line-command`
 
 > **Independent project disclaimer**
 >
