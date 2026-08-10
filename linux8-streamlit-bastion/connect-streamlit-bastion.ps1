@@ -45,6 +45,8 @@ param(
 
     [string]$AuthMode,
 
+    [string]$OciConfigFilePath,
+
     [ValidatePattern('^[a-z_][a-z0-9_-]*$')]
     [string]$TargetUser = 'oracle',
 
@@ -219,6 +221,9 @@ if ($DryRun) {
     Write-Host "Target:       ${TargetUser}@${PrivateIp}:22"
     Write-Host "Public key:   $publicKey"
     Write-Host "Private key:  $privateKey"
+    if ($OciConfigFilePath) {
+        Write-Host "OCI config:   $OciConfigFilePath"
+    }
     Write-Host "Local tunnel: 127.0.0.1:${LocalPort} -> 127.0.0.1:${RemotePort}"
     Write-Host "Browser URL:  $browserUrl"
     return
@@ -229,6 +234,10 @@ $resolvedSshExecutable = Resolve-ExecutablePath -Name $SshExecutable
 $script:OciGlobalArguments = @('--profile', $Profile, '--region', $Region)
 if ($AuthMode) {
     $script:OciGlobalArguments += @('--auth', $AuthMode)
+}
+if ($OciConfigFilePath) {
+    $resolvedOciConfigFile = (Resolve-Path -LiteralPath $OciConfigFilePath -ErrorAction Stop).Path
+    $script:OciGlobalArguments += @('--config-file', $resolvedOciConfigFile)
 }
 
 Write-Host "Checking existing Bastion service in $Region..."

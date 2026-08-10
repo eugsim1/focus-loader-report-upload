@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.5.4-streamlit`
+Version `26.5.9-windows-auth-packages`
 
 > **Independent project disclaimer**
 >
@@ -141,6 +141,15 @@ deployment, systemd, API, upgrade, rollback, and troubleshooting steps are in
 [`linux8-streamlit-bastion/README.md`](linux8-streamlit-bastion/README.md) and
 [`streamlit-ui/README.md`](streamlit-ui/README.md).
 
+Two complete Windows authentication wrappers are also available:
+
+- [`windows-browser-auth-streamlit/README.md`](windows-browser-auth-streamlit/README.md)
+  creates and validates a temporary OCI CLI security-token profile through
+  browser sign-in.
+- [`windows-api-key-auth-streamlit/README.md`](windows-api-key-auth-streamlit/README.md)
+  safely creates or validates a named local OCI API-key profile from explicit
+  parameters, preserving other profiles and backing up changed configuration.
+
 ## Contents
 
 - [Goal of this utility](#goal-of-this-utility)
@@ -157,6 +166,8 @@ deployment, systemd, API, upgrade, rollback, and troubleshooting steps are in
 - [Build and test](#build-and-test)
 - [Read-only TNS alias GUI](README_TNS_GUI.md)
 - [Complete Streamlit deployment guide](streamlit-ui/README.md)
+- [Windows browser-authentication tunnel](windows-browser-auth-streamlit/README.md)
+- [Windows API-key-authentication tunnel](windows-api-key-auth-streamlit/README.md)
 - [Complete command-line flag reference](#complete-command-line-flag-reference)
 - [Usage examples](#usage-examples)
 - [Cron-based incremental retrieval](#cron-based-incremental-retrieval)

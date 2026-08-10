@@ -1,5 +1,15 @@
 # Changelog
 
+## 26.5.9-windows-auth-packages
+
+- Added a standalone Windows browser-authentication launcher that creates or
+  reuses an OCI CLI security-token profile before opening the Streamlit tunnel.
+- Added a separate Windows API-key launcher that builds a named OCI profile
+  from explicit parameters, preserves unrelated profiles, and requires opt-in
+  before replacing a different profile.
+- Added complete setup, security, one-line invocation, and troubleshooting
+  guides, plus automated dry-run and mocked lifecycle coverage for both modes.
+
 ## 26.5.8-powershell-json-parsing
 
 - Removed Windows-sensitive JMESPath quoting from the Bastion launcher and now

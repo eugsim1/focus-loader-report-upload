@@ -48,26 +48,32 @@ jobs:
         working-directory: streamlit-ui
         run: python -m compileall -q app.py focus_api.py command_builder.py tests
 
-      - name: Validate PowerShell Bastion launcher
+      - name: Validate PowerShell Windows authentication launchers
         shell: pwsh
         run: |
           $scriptPath = 'linux8-streamlit-bastion/connect-streamlit-bastion.ps1'
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path $scriptPath),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | Format-List
-            throw 'PowerShell parser validation failed.'
+          $browserScript = 'windows-browser-auth-streamlit/connect-streamlit-browser-auth.ps1'
+          $apiKeyScript = 'windows-api-key-auth-streamlit/connect-streamlit-api-key-auth.ps1'
+          foreach ($candidate in @($scriptPath, $browserScript, $apiKeyScript)) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $candidate),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | Format-List
+              throw "PowerShell parser validation failed for $candidate."
+            }
           }
 
           $privateKey = Join-Path $env:RUNNER_TEMP 'test_bastion_key'
           $publicKey = "${privateKey}.pub"
+          $apiPrivateKey = Join-Path $env:RUNNER_TEMP 'test_oci_api_key.pem'
           Set-Content -LiteralPath $privateKey -Value 'TEST-ONLY-PRIVATE-KEY'
           Set-Content -LiteralPath $publicKey -Value 'ssh-ed25519 AAAATESTONLY'
+          Set-Content -LiteralPath $apiPrivateKey -Value 'TEST-ONLY-API-PRIVATE-KEY'
           & $scriptPath `
             -BastionId 'ocid1.bastion.oc1.eu-frankfurt-1.testbastion' `
             -InstanceId 'ocid1.instance.oc1.eu-frankfurt-1.testinstance' `
@@ -75,6 +81,29 @@ jobs:
             -Region 'eu-frankfurt-1' `
             -SshPrivateKeyPath $privateKey `
             -LocalPort 18501 `
+            -DryRun
+
+          & $browserScript `
+            -BastionId 'ocid1.bastion.oc1.eu-frankfurt-1.testbastion' `
+            -InstanceId 'ocid1.instance.oc1.eu-frankfurt-1.testinstance' `
+            -PrivateIp '10.30.1.10' `
+            -Region 'eu-frankfurt-1' `
+            -SshPrivateKeyPath $privateKey `
+            -LocalPort 18502 `
+            -DryRun
+
+          & $apiKeyScript `
+            -BastionId 'ocid1.bastion.oc1.eu-frankfurt-1.testbastion' `
+            -InstanceId 'ocid1.instance.oc1.eu-frankfurt-1.testinstance' `
+            -PrivateIp '10.30.1.10' `
+            -Region 'eu-frankfurt-1' `
+            -SshPrivateKeyPath $privateKey `
+            -OciUserId 'ocid1.user.oc1..testuser' `
+            -OciTenancyId 'ocid1.tenancy.oc1..testtenancy' `
+            -ApiKeyFingerprint 'aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99' `
+            -ApiPrivateKeyPath $apiPrivateKey `
+            -OciConfigFilePath (Join-Path $env:RUNNER_TEMP 'dry-run-oci-config') `
+            -LocalPort 18503 `
             -DryRun
 
           $ociMock = Join-Path $env:RUNNER_TEMP 'oci-mock'
@@ -96,6 +125,9 @@ jobs:
             "bastion session delete")
               printf '%s\n' '{}'
               ;;
+            "session validate --profile")
+              printf '%s\n' 'Session is valid'
+              ;;
             *)
               printf 'Unexpected OCI command: %s\n' "$*" >&2
               exit 65
@@ -113,9 +145,52 @@ jobs:
             -SshPrivateKeyPath $privateKey `
             -OciExecutable $ociMock `
             -SshExecutable '/usr/bin/true' `
-            -LocalPort 18502 `
+            -LocalPort 18504 `
             -WaitSeconds 60 `
             -PollSeconds 1
+
+          & $browserScript `
+            -BastionId 'ocid1.bastion.oc1.eu-frankfurt-1.testbastion' `
+            -InstanceId 'ocid1.instance.oc1.eu-frankfurt-1.testinstance' `
+            -PrivateIp '10.30.1.10' `
+            -Region 'eu-frankfurt-1' `
+            -SshPrivateKeyPath $privateKey `
+            -UseExistingSession `
+            -OciExecutable $ociMock `
+            -SshExecutable '/usr/bin/true' `
+            -LocalPort 18505 `
+            -WaitSeconds 60 `
+            -PollSeconds 1
+
+          $apiConfig = Join-Path $env:RUNNER_TEMP 'api-key-oci-config'
+          & $apiKeyScript `
+            -BastionId 'ocid1.bastion.oc1.eu-frankfurt-1.testbastion' `
+            -InstanceId 'ocid1.instance.oc1.eu-frankfurt-1.testinstance' `
+            -PrivateIp '10.30.1.10' `
+            -Region 'eu-frankfurt-1' `
+            -SshPrivateKeyPath $privateKey `
+            -OciUserId 'ocid1.user.oc1..testuser' `
+            -OciTenancyId 'ocid1.tenancy.oc1..testtenancy' `
+            -ApiKeyFingerprint 'aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99' `
+            -ApiPrivateKeyPath $apiPrivateKey `
+            -OciConfigFilePath $apiConfig `
+            -OciExecutable $ociMock `
+            -SshExecutable '/usr/bin/true' `
+            -LocalPort 18506 `
+            -WaitSeconds 60 `
+            -PollSeconds 1
+
+          $profileText = Get-Content -LiteralPath $apiConfig -Raw
+          foreach ($expected in @(
+            '[STREAMLIT_API_KEY]',
+            'user=ocid1.user.oc1..testuser',
+            'tenancy=ocid1.tenancy.oc1..testtenancy',
+            'fingerprint=aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99'
+          )) {
+            if (-not $profileText.Contains($expected)) {
+              throw "Generated API-key profile is missing: $expected"
+            }
+          }
 
       - name: Build
         env:
