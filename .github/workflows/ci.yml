@@ -77,6 +77,46 @@ jobs:
             -LocalPort 18501 `
             -DryRun
 
+          $ociMock = Join-Path $env:RUNNER_TEMP 'oci-mock'
+          $mockSource = @'
+          #!/usr/bin/env bash
+          case "$1 $2 $3" in
+            "bastion bastion get")
+              printf '%s\n' '{"data":{"lifecycle-state":"ACTIVE"}}'
+              ;;
+            "bastion session create-managed-ssh")
+              printf '%s\n' '{}'
+              ;;
+            "bastion session list")
+              printf '%s\n' '{"data":[{"id":"ocid1.bastionsession.oc1.eu-frankfurt-1.test"}]}'
+              ;;
+            "bastion session get")
+              printf '%s\n' '{"data":{"lifecycle-state":"ACTIVE"}}'
+              ;;
+            "bastion session delete")
+              printf '%s\n' '{}'
+              ;;
+            *)
+              printf 'Unexpected OCI command: %s\n' "$*" >&2
+              exit 65
+              ;;
+          esac
+          '@
+          Set-Content -LiteralPath $ociMock -Value $mockSource -NoNewline
+          & chmod +x $ociMock
+
+          & $scriptPath `
+            -BastionId 'ocid1.bastion.oc1.eu-frankfurt-1.testbastion' `
+            -InstanceId 'ocid1.instance.oc1.eu-frankfurt-1.testinstance' `
+            -PrivateIp '10.30.1.10' `
+            -Region 'eu-frankfurt-1' `
+            -SshPrivateKeyPath $privateKey `
+            -OciExecutable $ociMock `
+            -SshExecutable '/usr/bin/true' `
+            -LocalPort 18502 `
+            -WaitSeconds 60 `
+            -PollSeconds 1
+
       - name: Build
         env:
           CGO_ENABLED: "1"

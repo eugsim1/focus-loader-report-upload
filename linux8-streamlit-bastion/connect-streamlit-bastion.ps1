@@ -160,6 +160,21 @@ function Invoke-OciText {
         -Arguments ($Arguments + $script:OciGlobalArguments)
 }
 
+function Invoke-OciJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    $jsonText = Invoke-OciText -Arguments ($Arguments + @('--output', 'json'))
+    try {
+        return $jsonText | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "OCI CLI returned invalid JSON for: oci $($Arguments -join ' ')`n$($_.Exception.Message)"
+    }
+}
+
 function Test-LocalPortInUse {
     param(
         [Parameter(Mandatory = $true)]
@@ -217,12 +232,14 @@ if ($AuthMode) {
 }
 
 Write-Host "Checking existing Bastion service in $Region..."
-$bastionState = Invoke-OciText -Arguments @(
+$bastionDetails = Invoke-OciJson -Arguments @(
     'bastion', 'bastion', 'get',
-    '--bastion-id', $BastionId,
-    '--query', 'data."lifecycle-state"',
-    '--raw-output'
+    '--bastion-id', $BastionId
 )
+$bastionState = [string]$bastionDetails.data.'lifecycle-state'
+if (-not $bastionState) {
+    throw "OCI returned no lifecycle state for Bastion $BastionId."
+}
 if ($bastionState -ne 'ACTIVE') {
     throw "Bastion $BastionId is $bastionState; expected ACTIVE."
 }
@@ -252,14 +269,17 @@ try {
     $discoveryIteration = 0
     while ($discoveryTimer.Elapsed.TotalSeconds -lt $WaitSeconds) {
         $discoveryIteration++
-        $sessionId = Invoke-OciText -Arguments @(
+        $sessionList = Invoke-OciJson -Arguments @(
             'bastion', 'session', 'list',
             '--bastion-id', $BastionId,
             '--display-name', $SessionDisplayName,
-            '--all',
-            '--query', 'data[0].id',
-            '--raw-output'
+            '--all'
         )
+        $sessions = @($sessionList.data)
+        $sessionId = $null
+        if ($sessions.Count -gt 0) {
+            $sessionId = [string]$sessions[0].id
+        }
         Write-Host "Session discovery check ${discoveryIteration}: $sessionId"
         if ($sessionId -match '^ocid1\.bastionsession\.') {
             break
@@ -276,12 +296,14 @@ try {
     $sessionState = 'UNKNOWN'
     while ($activeTimer.Elapsed.TotalSeconds -lt $WaitSeconds) {
         $activeIteration++
-        $sessionState = Invoke-OciText -Arguments @(
+        $sessionDetails = Invoke-OciJson -Arguments @(
             'bastion', 'session', 'get',
-            '--session-id', $sessionId,
-            '--query', 'data."lifecycle-state"',
-            '--raw-output'
+            '--session-id', $sessionId
         )
+        $sessionState = [string]$sessionDetails.data.'lifecycle-state'
+        if (-not $sessionState) {
+            $sessionState = 'UNKNOWN'
+        }
         Write-Host "Bastion session check ${activeIteration}: status=$sessionState; expected=ACTIVE"
         if ($sessionState -eq 'ACTIVE') {
             break

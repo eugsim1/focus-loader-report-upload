@@ -1,5 +1,12 @@
 # Changelog
 
+## 26.5.8-powershell-json-parsing
+
+- Removed Windows-sensitive JMESPath quoting from the Bastion launcher and now
+  parses OCI JSON responses directly in PowerShell.
+- Added a complete mocked CI lifecycle covering Bastion lookup, managed-session
+  creation and discovery, `ACTIVE` polling, SSH tunnel startup, and cleanup.
+
 ## 26.5.7-powershell-oci-errors
 
 - Fixed Windows PowerShell 5.1 handling of OCI CLI stderr so a service error no
