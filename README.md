@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.5.12-browser-one-line-command`
+Version `26.6.0-schema-browser`
 
 > **Independent project disclaimer**
 >
@@ -13,7 +13,7 @@ This Go application retrieves OCI FOCUS cost reports from Object Storage, transf
 - upload each transformed CSV and then load it;
 - generate pre-load detail, summary, and capacity-planning reports;
 - display the first `$TNS_ADMIN/tnsnames.ora` alias in a lightweight, read-only browser interface;
-- provide an optional modular Streamlit interface for alias selection, diagnostics, and validated command generation;
+- provide an optional modular Streamlit interface for first-alias database table discovery, alias selection, diagnostics, and validated command generation;
 - run incrementally from cron with durable load and upload checkpoints.
 
 An [Ansible project](ansible/README.md) is included to build the Linux binary,
@@ -22,7 +22,7 @@ variable-driven settings and protected secrets.
 
 The source prefix is `FOCUS Reports/`. Destination object names preserve the source path and remove only the final `.gz` suffix.
 
-> Important: loader, upload-only, and pre-load modes connect to Oracle Database. The read-only `-tns-gui` mode is the exception: it reads only `$TNS_ADMIN/tnsnames.ora` and requires neither database nor OCI credentials.
+> Important: loader, upload-only, and pre-load modes connect to Oracle Database. Starting `-tns-gui` requires neither database nor OCI credentials. Its alias endpoints read only `$TNS_ADMIN/tnsnames.ora`; the optional schema-table endpoint connects only when a user submits database credentials for that single request.
 
 ## Goal of this utility
 
@@ -95,25 +95,29 @@ The editable diagram embeds Object Storage, Compute VM, IAM, Vault, and Autonomo
 ## Modular Streamlit frontend
 
 The optional [Streamlit frontend](streamlit-ui/README.md) runs as an independent
-Python service. It calls versioned, read-only endpoints in the Go process and
-does not access the wallet or `tnsnames.ora` itself. This keeps form, navigation,
+Python service. It calls versioned local endpoints in the Go process and does
+not access the wallet or `tnsnames.ora` itself. This keeps form, navigation,
 chart, and future dashboard work outside the loader binary.
 
 Current interactions include:
 
 - backend health and version checks;
+- a first Database tables tab that uses the first TNS alias, accepts `ADMIN` or
+  another Oracle user through a masked password form, and lists an accessible
+  schema's tables;
 - display and selection of every alias in `$TNS_ADMIN/tnsnames.ora`;
 - diagnostic API output without connect descriptors or wallet content;
 - a validated command builder covering all four loader processing modes;
 - POSIX-safe command preview and reviewed shell-script download.
 
-The interface deliberately does not execute the generated command and never
-asks for a database password. Use the Vault secret OCID field and review the
-downloaded command before manual execution. Both the Go API and Streamlit
-services bind to loopback by default and are reached through SSH/OCI Bastion or
-an authenticated TLS reverse proxy.
+The command-builder tab deliberately does not execute generated commands and
+never asks for a database password. The separate Database tables tab sends a
+masked, submission-only password to the loopback Go API, which runs a fixed
+bind-variable `ALL_TABLES` query and immediately closes the connection. No SQL
+file is required. Both services bind to loopback by default and are reached
+through SSH/OCI Bastion or an authenticated TLS reverse proxy.
 
-Quick deployment after installing the `26.5.4-streamlit` Go binary:
+Quick deployment after installing the `26.6.0-schema-browser` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip
@@ -143,7 +147,9 @@ deployment, systemd, API, upgrade, rollback, and troubleshooting steps are in
 
 Both installation guides include a least-privilege ACL procedure for the case
 where `TNS_ADMIN=/home/oracle/adb_wallet` remains owned by `oracle` while the
-read-only alias service runs as `focusloader`.
+local alias/database-metadata service runs as `focusloader`. Database table
+lookup also requires explicit read access to the necessary Oracle Net wallet
+files, commonly `sqlnet.ora` and `cwallet.sso` for ADB.
 
 Two complete Windows authentication wrappers are also available:
 
@@ -188,7 +194,7 @@ Two complete Windows authentication wrappers are also available:
 | Upload and load | upload flags plus `-load-after-upload` | Uploads each transformed CSV and runs SQL*Loader only after that upload succeeds. |
 | Pre-load report | `-preload-report` | Creates reports and stops unless `-continue-after-report` is supplied. |
 | Metadata-only report | `-skip-preload-content-scan` | Avoids report-time object download/decompression/row counting. |
-| TNS alias GUI | `-tns-gui` | Starts a read-only browser page showing the first alias from `$TNS_ADMIN/tnsnames.ora`; skips database and OCI initialization. |
+| TNS/metadata GUI | `-tns-gui` | Starts the local alias page and versioned Streamlit backend. Startup skips database/OCI initialization; the optional table-list endpoint connects only with credentials submitted for that request. |
 
 Pipeline:
 
@@ -552,7 +558,7 @@ All relative paths are resolved from the process working directory. The supplied
 | `-workers` | Integer, default `1` | Number of files processed concurrently. Must be at least 1 and is capped internally to the number of pending objects. More workers increase OCI requests, local disk usage, memory, Oracle sessions, and SQL*Loader pressure. Start with 1–4 and measure. |
 | `-verbose` | Boolean, default `false` | Prints detailed per-file pre-load inspection and transformed-upload progress. Without it, upload progress is printed periodically and at completion. Useful for diagnosis but can create large cron logs. |
 | `-keep-work-files` | Boolean, default `false` | Retains downloaded gzip files and generated CSV/control artifacts after successful processing. Normally successful work files are removed. Failure artifacts may remain even without this flag so they can be investigated. Plan disk capacity before enabling it. |
-| `-tns-gui` | Boolean, default `false` | Starts the built-in read-only TNS alias web page and exits before database/OCI validation. It reads the first alias from `$TNS_ADMIN/tnsnames.ora`. |
+| `-tns-gui` | Boolean, default `false` | Starts the local TNS alias and database-metadata interface and exits before normal loader database/OCI validation. The alias page reads `$TNS_ADMIN/tnsnames.ora`; the table endpoint uses submitted credentials only for one read-only metadata request. |
 | `-tns-gui-listen` | String, default `127.0.0.1:8080` | Listener used with `-tns-gui`. Keep the loopback default and reach it through SSH; a non-loopback listener has no built-in authentication. |
 
 ### OCI authentication, source location, and networking
@@ -636,7 +642,7 @@ Checkpoint files are target state, not disposable cache. Back them up and never 
 - `-skip-tags` implies both `-skip-tag-rows` and `-skip-tag-keys`.
 - `-skip-preload-content-scan` automatically enables `-preload-report` only when upload mode is not enabled.
 - `-workers` must be at least 1.
-- Database credentials are validated before OCI discovery in all data-processing modes. `-tns-gui` is read-only and bypasses both validations.
+- Database credentials are validated before OCI discovery in all data-processing modes. `-tns-gui` startup and alias browsing bypass both validations; its optional table lookup validates only the credentials submitted for that request.
 - `-force` overrides processed-file filtering but does not disable exact `-f` or minimum-date `-d` filtering.
 
 Run `./focus-loader-report-upload -h` after every upgrade; the executable's help output is the authoritative parser-level option list.
@@ -666,7 +672,9 @@ SSH tunnel and open `http://127.0.0.1:8080/`:
 ssh -N -L 8080:127.0.0.1:8080 opc@SERVER_IP
 ```
 
-No `-du`, `-dn`, password, secret, or OCI authentication flag is required.
+No `-du`, `-dn`, password, secret, or OCI authentication flag is required to
+start the service or view aliases. The optional Streamlit table browser prompts
+for database credentials only when requested.
 See [README_TNS_GUI.md](README_TNS_GUI.md) for Oracle Linux 8 systemd setup,
 security guidance, Bastion access, API output, and troubleshooting.
 
@@ -950,7 +958,7 @@ The program returns an error to avoid silently losing incremental state. Fix per
 - Back up persistent checkpoint files and monitor cron exit status.
 - Review all scripts and policies for your tenancy before deployment.
 - Keep the Go API and Streamlit listeners on loopback; use SSH/OCI Bastion or an authenticated TLS reverse proxy.
-- Treat Streamlit as a presentation service: it must not receive plaintext database passwords or execute arbitrary loader commands.
+- Keep Streamlit and its Go API on loopback. The table browser may receive a masked, submission-only database password for one fixed metadata query; never log or persist it, and never allow the UI to execute arbitrary SQL or loader commands.
 
 ## Publish to GitHub
 
@@ -973,7 +981,7 @@ the client separately.
 ## Additional documentation
 
 - `Location.md`: documentation-safe local project location; the project itself was not moved.
-- `README_TNS_GUI.md`: read-only TNS alias GUI, Oracle Linux 8 service installation, SSH access, and troubleshooting.
+- `README_TNS_GUI.md`: TNS alias GUI and local metadata API, Oracle Linux 8 service installation, SSH access, and troubleshooting.
 - `streamlit-ui/README.md`: complete modular Streamlit architecture, installation, systemd, use, tests, security, upgrade, rollback, and troubleshooting guide.
 - `README_REPORT_UPLOAD.md`: transformed upload behavior and report schema.
 - `README_PRELOAD_REPORT.md`: pre-load and capacity report details.

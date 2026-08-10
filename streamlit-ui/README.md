@@ -15,6 +15,10 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
 - Independent Python/Streamlit process on `127.0.0.1:8501`.
 - Go backend health validation through `GET /api/v1/health`.
 - Ordered alias discovery through `GET /api/v1/tns/aliases`.
+- First-tab database connection using the first TNS alias, an editable Oracle
+  user (default `ADMIN`), a masked password field, and an optional schema owner.
+- Read-only schema-table discovery through `POST /api/v1/database/tables` and
+  CSV download of the returned owner/table names.
 - Read-only display of the first TNS alias and `tnsnames.ora` source path.
 - Interactive selection from every alias in the file.
 - Form-based loader command builder for database load, pre-load report,
@@ -27,9 +31,10 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
 - Python unit tests, Go API/parser tests, a systemd service, an automated
   installer, and a deployed-service smoke-test script.
 
-The command builder does **not** execute the generated command. This is an
-intentional security boundary. It does not accept a database password; it
-accepts only a Vault secret OCID for the existing `-ds` loader option.
+The command builder does **not** execute the generated command and still accepts
+only a Vault secret OCID for the loader's `-ds` option. The separate Database
+tables tab accepts a password only for one metadata request. Its form is masked
+and cleared on submission; the password is not logged, persisted, or returned.
 
 ## Architecture
 
@@ -38,35 +43,41 @@ flowchart LR
     Browser["Administrator browser"]
     Tunnel["SSH or OCI Bastion tunnel"]
     UI["Streamlit UI<br/>127.0.0.1:8501"]
-    API["Go read-only API<br/>127.0.0.1:8080"]
+    API["Go TNS and metadata API<br/>127.0.0.1:8080"]
     TNS["$TNS_ADMIN/tnsnames.ora"]
     Builder["Validated command preview"]
     Loader["Existing Go loader<br/>manual execution"]
+    DB["Oracle Database<br/>ALL_TABLES"]
     OCI["OCI and Autonomous Database"]
 
     Browser --> Tunnel --> UI
     UI --> API --> TNS
+    API -->|"credential-once lookup"| DB
     UI --> Builder --> Loader --> OCI
 ```
 
 The Streamlit process never reads the wallet or `tnsnames.ora`. The Go process
-owns that file access and returns only aliases, the source path, and read time.
-The API URL is taken from the server-side `FOCUS_API_URL` environment variable
-and cannot be changed by a browser user.
+owns Oracle Net access. Alias responses contain only aliases, source path, and
+read time. For a table lookup, Streamlit sends the submitted credentials to the
+loopback-only Go API; the Go process uses the first alias, executes a fixed
+bind-variable query against `ALL_TABLES`, returns owner/table names, and closes
+the connection. The API URL comes from server-side `FOCUS_API_URL` and cannot
+be changed by a browser user.
 
 ## Directory contents
 
 ```text
 streamlit-ui/
-├── .streamlit/config.toml       Loopback server and safe UI defaults
-├── app.py                       Streamlit application
-├── command_builder.py           Validated POSIX command construction
-├── focus_api.py                 Dependency-free Go API client
-├── requirements.txt             Runtime dependency range
-├── requirements-dev.txt         Test dependencies
-└── tests/
-    ├── test_command_builder.py
-    └── test_focus_api.py
+|-- .streamlit/config.toml       Loopback server and safe UI defaults
+|-- app.py                       Streamlit application
+|-- command_builder.py           Validated POSIX command construction
+|-- focus_api.py                 Dependency-free Go API client
+|-- requirements.txt             Runtime dependency range
+|-- requirements-dev.txt         Test dependencies
+`-- tests/
+    |-- test_app_smoke.py
+    |-- test_command_builder.py
+    `-- test_focus_api.py
 ```
 
 Related deployment files are located in the parent repository:
@@ -92,7 +103,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.5.4-streamlit"
+  "version": "26.6.0-schema-browser"
 }
 ```
 
@@ -116,6 +127,49 @@ Example:
 The original `GET /api/tns-alias` endpoint remains available for compatibility
 with the embedded page.
 
+### Database schema tables
+
+```http
+POST /api/v1/database/tables
+Content-Type: application/json
+```
+
+Request body:
+
+```json
+{
+  "username": "ADMIN",
+  "password": "submitted-only-at-runtime",
+  "schema": "FOCUS_APP"
+}
+```
+
+The API always uses `firstAlias`; the browser cannot supply a different connect
+descriptor. It does not execute caller-supplied SQL and needs no pre-existing
+SQL file. The built-in query is equivalent to:
+
+```sql
+SELECT OWNER, TABLE_NAME
+FROM ALL_TABLES
+WHERE OWNER = :schema_owner
+ORDER BY TABLE_NAME;
+```
+
+Example response:
+
+```json
+{
+  "connectAlias": "focusdb_high",
+  "username": "ADMIN",
+  "schema": "FOCUS_APP",
+  "tableCount": 2,
+  "tables": [
+    {"owner": "FOCUS_APP", "tableName": "LOAD_STATUS"},
+    {"owner": "FOCUS_APP", "tableName": "OCI_FOCUS"}
+  ]
+}
+```
+
 ## Oracle Linux 8 prerequisites
 
 The instructions assume:
@@ -124,8 +178,9 @@ The instructions assume:
 - the `focusloader` service account already exists;
 - the new Go binary is installed at
   `/opt/focus-loader/focus-loader-report-upload`;
-- the service account can traverse the TNS directory and read
-  `$TNS_ADMIN/tnsnames.ora`;
+- the service account can traverse the TNS directory, read
+  `$TNS_ADMIN/tnsnames.ora`, and read the Oracle Net/wallet files required for
+  a real connection (commonly `sqlnet.ora` and `cwallet.sso` for an ADB wallet);
 - outbound access to the approved Python package repository is available
   during installation;
 - `curl`, `systemd`, and OpenSSH are installed.
@@ -142,8 +197,8 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 
 ## 1. Build and install the updated Go backend
 
-The Streamlit frontend needs the versioned API endpoints introduced in
-`26.5.4-streamlit`.
+The first-tab schema browser needs the API endpoint introduced in
+`26.6.0-schema-browser`.
 
 ```bash
 cd /opt/focus-loader/src
@@ -163,7 +218,7 @@ sudo install -o focusloader -g focusloader -m 0750 \
 Expected version:
 
 ```text
-focus-loader-report-upload 26.5.4-streamlit
+focus-loader-report-upload 26.6.0-schema-browser
 ```
 
 ## 2. Verify TNS permissions
@@ -186,27 +241,34 @@ Grant only the required group traversal/read permissions. Do not make a wallet
 world-readable.
 
 For the common case where `TNS_ADMIN=/home/oracle/adb_wallet` remains owned by
-`oracle`, install the ACL tools and grant access only to the named file:
+`oracle`, install the ACL tools and grant access to the alias plus the minimum
+Oracle Net files needed by the schema browser:
 
 ```bash
 sudo dnf install -y acl
 
 sudo chmod 0700 /home/oracle/adb_wallet
 sudo chmod 0600 /home/oracle/adb_wallet/tnsnames.ora
+sudo chmod 0600 /home/oracle/adb_wallet/sqlnet.ora
+sudo chmod 0600 /home/oracle/adb_wallet/cwallet.sso
 
 # Allow focusloader to traverse the two directories.
 sudo setfacl -m u:focusloader:--x /home/oracle
 sudo setfacl -m u:focusloader:--x /home/oracle/adb_wallet
 
-# Allow reading only tnsnames.ora.
+# Allow reading the alias and the common ADB mTLS runtime files.
 sudo setfacl -m u:focusloader:r-- \
-  /home/oracle/adb_wallet/tnsnames.ora
+  /home/oracle/adb_wallet/tnsnames.ora \
+  /home/oracle/adb_wallet/sqlnet.ora \
+  /home/oracle/adb_wallet/cwallet.sso
 ```
 
 Verify the resulting access:
 
 ```bash
 sudo -u focusloader test -r /home/oracle/adb_wallet/tnsnames.ora
+sudo -u focusloader test -r /home/oracle/adb_wallet/sqlnet.ora
+sudo -u focusloader test -r /home/oracle/adb_wallet/cwallet.sso
 sudo -u focusloader head -n 1 /home/oracle/adb_wallet/tnsnames.ora
 sudo getfacl -p /home/oracle /home/oracle/adb_wallet \
   /home/oracle/adb_wallet/tnsnames.ora
@@ -214,9 +276,9 @@ sudo getfacl -p /home/oracle /home/oracle/adb_wallet \
 
 It is intentional that `focusloader` can traverse the wallet directory but
 cannot list it, so `ls /home/oracle/adb_wallet` may still fail for that user.
-This narrowly scoped ACL supports the read-only alias service. Full database
-connections can require additional wallet files; grant those separately only
-after reviewing the loader's runtime requirements.
+Wallet contents vary; if Oracle Net reports another required file, review that
+file and grant read access explicitly rather than making the directory
+world-readable.
 
 ## 3A. Automated installation
 
@@ -358,6 +420,19 @@ balancer; see its [HTTPS guidance](https://docs.streamlit.io/develop/concepts/co
 
 ## 6. Using the interface
 
+### Database tables tab (first tab)
+
+1. Confirm the displayed first TNS alias.
+2. Enter `ADMIN` or another unquoted Oracle database user.
+3. Keep **List the login user's schema** selected, or clear it and enter an
+   accessible schema owner such as `FOCUS_APP`.
+4. Enter the password in the masked field.
+5. Select **Connect and list tables**.
+6. Review or download the owner/table list. The password field clears and the
+   backend connection closes after this request.
+
+This tab does not accept SQL text and does not need a `.sql` file.
+
 ### Connection tab
 
 1. Confirm that backend status is `OK`.
@@ -430,8 +505,8 @@ curl -v http://127.0.0.1:8080/api/v1/health
 sudo grep '^FOCUS_API_URL=' /etc/focus-loader/streamlit.env
 ```
 
-An older `26.5.3` binary has only `/api/tns-alias`; install the
-`26.5.4-streamlit` binary before starting the new frontend.
+An older binary does not have `/api/v1/database/tables`; install the
+`26.6.0-schema-browser` binary before using the first tab.
 
 ### The alias endpoint returns an error
 
@@ -447,6 +522,25 @@ Restart after changing the environment:
 sudo systemctl restart focus-loader-tns-gui.service
 sudo systemctl restart focus-loader-streamlit.service
 ```
+
+### Database connection or table lookup fails
+
+Confirm the first alias, Oracle client, network route, and wallet access as the
+service user:
+
+```bash
+FIRST_ALIAS=$(curl -fsS http://127.0.0.1:8080/api/v1/tns/aliases | \
+  python3.11 -c 'import json,sys; print(json.load(sys.stdin)["firstAlias"])')
+sudo -u focusloader env TNS_ADMIN=/home/oracle/adb_wallet \
+  tnsping "$FIRST_ALIAS"
+sudo -u focusloader test -r /home/oracle/adb_wallet/sqlnet.ora
+sudo -u focusloader test -r /home/oracle/adb_wallet/cwallet.sso
+```
+
+`ORA-01017` normally means the database user/password is incorrect.
+`ORA-12154`, `ORA-12514`, or wallet/TLS errors normally indicate alias, Oracle
+Net, wallet-file, or network configuration problems. The schema owner must be
+visible to the login user through `ALL_TABLES`.
 
 ### Port already in use
 
@@ -498,7 +592,12 @@ directory to roll back application code.
 - The browser cannot override the backend URL.
 - Streamlit does not read the wallet or TNS file.
 - The API does not return connect descriptors or wallet contents.
-- The command builder never requests a database password.
+- The Database tables form masks and clears its password after submission.
+- The loopback API holds the password only for one request, redacts it from
+  returned errors, never logs it, and closes the database connection.
+- The metadata query is fixed in the Go binary and binds the schema value; no
+  browser-supplied SQL is accepted.
+- The command builder remains separate and never requests a database password.
 - The UI generates but never executes loader commands.
 - Shell arguments are represented as an argument list and POSIX-quoted.
 - The services run as the unprivileged `focusloader` account with systemd

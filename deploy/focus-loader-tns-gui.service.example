@@ -1,5 +1,5 @@
 [Unit]
-Description=FOCUS Loader read-only TNS alias web interface
+Description=FOCUS Loader TNS alias and database metadata API
 After=network.target
 
 [Service]

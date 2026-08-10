@@ -50,7 +50,7 @@ func parseArgs(args []string) (commandLine, error) {
 	fs.BoolVar(&cmd.loadAfterUpload, "load-after-upload", false, "Run SQL*Loader for each file immediately after its transformed CSV uploads successfully")
 	fs.BoolVar(&cmd.verbose, "verbose", false, "Print detailed per-file pre-load progress and diagnostics")
 	fs.BoolVar(&cmd.skipPreloadContentScan, "skip-preload-content-scan", false, "Do not download, decompress, or count rows in gzip objects during pre-load reporting")
-	fs.BoolVar(&cmd.tnsGUI, "tns-gui", false, "Start the read-only TNS alias browser interface; database and OCI credentials are not required")
+	fs.BoolVar(&cmd.tnsGUI, "tns-gui", false, "Start the local TNS and database-metadata API; startup credentials are not required")
 	fs.StringVar(&cmd.tnsGUIListen, "tns-gui-listen", "127.0.0.1:8080", "TNS GUI listen address")
 	fs.BoolVar(&cmd.showVersion, "version", false, "show version")
 
@@ -122,7 +122,7 @@ func printUsage() {
 	fmt.Println("  -load-after-upload Run SQL*Loader immediately after each transformed CSV upload succeeds")
 	fmt.Println("  -verbose      Print detailed per-file pre-load progress")
 	fmt.Println("  -skip-preload-content-scan Metadata-only pre-load report; no object download, gzip decompression, or CSV row count")
-	fmt.Println("  -tns-gui      Start the read-only $TNS_ADMIN/tnsnames.ora browser interface")
+	fmt.Println("  -tns-gui      Start the local TNS and credential-once database-metadata interface")
 	fmt.Println("  -tns-gui-listen string TNS GUI listen address (default 127.0.0.1:8080)")
 	fmt.Println("  -version      Show version")
 }

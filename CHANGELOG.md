@@ -1,5 +1,19 @@
 # Changelog
 
+## 26.6.0-schema-browser
+
+- Added a first Streamlit **Database tables** tab that uses the first TNS alias,
+  accepts `ADMIN` or another Oracle user through a masked password field, and
+  lists all tables visible for the selected schema.
+- Added a loopback-only `POST /api/v1/database/tables` Go endpoint backed by the
+  existing `godror` driver and a fixed bind-variable `ALL_TABLES` query; no SQL
+  file or caller-supplied SQL is used.
+- Clear the password form after submission, redact it from backend errors,
+  close each database connection after the lookup, and return only alias,
+  login, schema, and owner/table metadata.
+- Expanded automated Go/Python tests and Oracle Linux wallet-permission,
+  installation, security, and troubleshooting documentation.
+
 ## 26.5.12-browser-one-line-command
 
 - Updated the Windows browser-authentication guide with the complete one-line

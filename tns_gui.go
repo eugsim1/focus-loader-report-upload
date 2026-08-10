@@ -57,7 +57,7 @@ func runTNSGUI(ctx context.Context, listenAddress string) error {
 		Handler:           newTNSGUIHandler(os.Getenv),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		WriteTimeout:      40 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
@@ -66,7 +66,7 @@ func runTNSGUI(ctx context.Context, listenAddress string) error {
 		fmt.Println("WARNING: the TNS GUI has no built-in authentication; use a firewall or reverse proxy before exposing it")
 	}
 	fmt.Printf("TNS GUI listening on http://%s\n", listener.Addr().String())
-	fmt.Println("The page reads only the first alias from $TNS_ADMIN/tnsnames.ora; it never modifies the file.")
+	fmt.Println("The service reads TNS aliases and exposes a credential-once schema table lookup; it never modifies the database.")
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -101,6 +101,13 @@ func isLoopbackHost(host string) bool {
 }
 
 func newTNSGUIHandler(getenv func(string) string) http.Handler {
+	return newTNSGUIHandlerWithTableLister(getenv, listOracleSchemaTables)
+}
+
+func newTNSGUIHandlerWithTableLister(
+	getenv func(string) string,
+	lister databaseTableLister,
+) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		setTNSGUIJSONHeaders(w)
@@ -121,6 +128,9 @@ func newTNSGUIHandler(getenv func(string) string) http.Handler {
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 		_ = json.NewEncoder(w).Encode(response)
+	})
+	mux.HandleFunc("/api/v1/database/tables", func(w http.ResponseWriter, r *http.Request) {
+		handleDatabaseTables(w, r, getenv, lister)
 	})
 	mux.HandleFunc("/api/tns-alias", func(w http.ResponseWriter, r *http.Request) {
 		setTNSGUIJSONHeaders(w)

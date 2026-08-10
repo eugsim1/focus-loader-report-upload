@@ -9,7 +9,8 @@ desktop, X11, or another service runtime.
 
 For a flexible multi-form interface, this repository now also includes a
 separate [modular Streamlit frontend](streamlit-ui/README.md). The embedded page
-remains a useful low-dependency fallback and supplies its read-only Go API.
+remains a useful low-dependency alias viewer. The same local Go service supplies
+the Streamlit TNS and database-metadata API.
 
 Start it with `-tns-gui`. This mode exits before OCI and database credential
 validation, so `-du`, `-dn`, `-dp`, `-ds`, OCI configuration, and instance
@@ -23,7 +24,8 @@ The interface:
 - displays the first alias in the first alias assignment;
 - returns the first alias when one descriptor has multiple aliases;
 - reads the file again on every page load or **Refresh** click;
-- exposes only the alias, file path, read time, and an error if applicable;
+- exposes only the alias, file path, read time, and an error from its alias
+  endpoints;
 - never displays the connect descriptor and never writes `tnsnames.ora`.
 
 The alias input is deliberately read-only. Editing a network configuration
@@ -84,8 +86,10 @@ sudo -u focusloader env TNS_ADMIN=/opt/oracle/wallet \
   -tns-gui-listen 127.0.0.1:8080
 ```
 
-No loader database password or OCI credentials are needed in this mode. Test
-the server locally from a second terminal:
+No loader database password or OCI credentials are needed to start this mode or
+use its alias page. The optional Streamlit table lookup supplies credentials
+only with its individual metadata request. Test the server locally from a
+second terminal:
 
 ```bash
 curl -fsS http://127.0.0.1:8080/api/v1/health
@@ -96,6 +100,11 @@ curl -fsS http://127.0.0.1:8080/api/tns-alias
 The versioned aliases endpoint returns every top-level alias in file order for
 the Streamlit selector. The original endpoint returns only the first alias and
 is retained for compatibility.
+
+The `POST /api/v1/database/tables` endpoint used by Streamlit is documented in
+[`streamlit-ui/README.md`](streamlit-ui/README.md). It always uses the first
+alias and runs a fixed, read-only `ALL_TABLES` query; it does not accept SQL text
+or require an external SQL file.
 
 Example response:
 
@@ -239,8 +248,11 @@ grep -nE '^[[:space:]]*[A-Za-z0-9_.-]+[[:space:]]*=' \
 
 - Keep the listener on loopback unless a protected reverse proxy is used.
 - Do not place wallet contents, credentials, or descriptors in browser logs.
-- The handler accepts only `GET`/`HEAD`, adds no-cache and browser-hardening
-  headers, and has request timeouts.
+- Alias/page handlers accept only `GET`/`HEAD`; the database-table handler
+  accepts only a size-limited JSON `POST`. All responses use no-cache and
+  browser-hardening headers and server-side request timeouts.
+- Database passwords are held only for one table-lookup request, redacted from
+  returned errors, never logged, and never included in a response.
 - The source path is fixed from the server-side environment; the browser cannot
   request an arbitrary file.
 - The implementation is independent software and is not affiliated with,

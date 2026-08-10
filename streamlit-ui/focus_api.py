@@ -28,6 +28,20 @@ class AliasCatalog:
     read_at_utc: str
 
 
+@dataclass(frozen=True)
+class DatabaseTable:
+    owner: str
+    table_name: str
+
+
+@dataclass(frozen=True)
+class DatabaseTables:
+    connect_alias: str
+    username: str
+    schema: str
+    tables: tuple[DatabaseTable, ...]
+
+
 class FocusAPIClient:
     def __init__(
         self,
@@ -77,14 +91,63 @@ class FocusAPIClient:
             read_at_utc=self._required_string(payload, "readAtUtc"),
         )
 
+    def schema_tables(self, username: str, password: str, schema: str) -> DatabaseTables:
+        payload = self._request_json(
+            "/api/v1/database/tables",
+            method="POST",
+            body={"username": username, "password": password, "schema": schema},
+            timeout_seconds=max(self.timeout_seconds, 35.0),
+        )
+        raw_tables = payload.get("tables")
+        if not isinstance(raw_tables, list):
+            raise FocusAPIError("The Go API returned an invalid database table list.")
+
+        tables: list[DatabaseTable] = []
+        for raw_table in raw_tables:
+            if not isinstance(raw_table, dict):
+                raise FocusAPIError("The Go API returned an invalid database table entry.")
+            tables.append(
+                DatabaseTable(
+                    owner=self._required_string(raw_table, "owner"),
+                    table_name=self._required_string(raw_table, "tableName"),
+                )
+            )
+        table_count = payload.get("tableCount")
+        if not isinstance(table_count, int) or table_count != len(tables):
+            raise FocusAPIError("The Go API returned an inconsistent database table count.")
+        return DatabaseTables(
+            connect_alias=self._required_string(payload, "connectAlias"),
+            username=self._required_string(payload, "username"),
+            schema=self._required_string(payload, "schema"),
+            tables=tuple(tables),
+        )
+
     def _get_json(self, path: str) -> Mapping[str, Any]:
+        return self._request_json(path, method="GET")
+
+    def _request_json(
+        self,
+        path: str,
+        method: str,
+        body: Mapping[str, Any] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> Mapping[str, Any]:
+        encoded_body = None
+        headers = {"Accept": "application/json", "User-Agent": "focus-loader-streamlit-ui"}
+        if body is not None:
+            encoded_body = json.dumps(body, separators=(",", ":")).encode("utf-8")
+            headers["Content-Type"] = "application/json"
         request = Request(
             self.base_url + path,
-            method="GET",
-            headers={"Accept": "application/json", "User-Agent": "focus-loader-streamlit-ui"},
+            data=encoded_body,
+            method=method,
+            headers=headers,
         )
         try:
-            with self._opener(request, timeout=self.timeout_seconds) as response:
+            with self._opener(
+                request,
+                timeout=timeout_seconds if timeout_seconds is not None else self.timeout_seconds,
+            ) as response:
                 raw = response.read()
         except HTTPError as error:
             detail = self._http_error_detail(error)

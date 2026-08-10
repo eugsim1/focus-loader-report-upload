@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.5.4-streamlit"
+	version       = "26.6.0-schema-browser"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

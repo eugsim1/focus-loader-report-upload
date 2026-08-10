@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -190,6 +193,120 @@ func TestTNSGUIHealthAPI(t *testing.T) {
 	}
 	if payload.Status != "ok" || payload.Version != version {
 		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
+func TestTNSGUIDatabaseTablesAPIUsesFirstAlias(t *testing.T) {
+	tnsAdmin := t.TempDir()
+	path := filepath.Join(tnsAdmin, tnsNamesFileName)
+	content := "FIRST_SERVICE = (DESCRIPTION = (ADDRESS = (PROTOCOL = TCPS)))\nSECOND_SERVICE = (DESCRIPTION = (ADDRESS = (PROTOCOL = TCPS)))\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotUsername, gotPassword, gotAlias, gotSchema string
+	lister := func(
+		_ context.Context,
+		username string,
+		password string,
+		alias string,
+		schema string,
+	) ([]databaseTableInfo, error) {
+		gotUsername, gotPassword, gotAlias, gotSchema = username, password, alias, schema
+		return []databaseTableInfo{
+			{Owner: "FOCUS_APP", TableName: "OCI_FOCUS"},
+			{Owner: "FOCUS_APP", TableName: "LOAD_STATUS"},
+		}, nil
+	}
+	handler := newTNSGUIHandlerWithTableLister(func(name string) string {
+		if name == "TNS_ADMIN" {
+			return tnsAdmin
+		}
+		return ""
+	}, lister)
+	body := bytes.NewBufferString(`{"username":"ADMIN","password":"test-secret","schema":"focus_app"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/database/tables", body)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if gotUsername != "ADMIN" || gotPassword != "test-secret" || gotAlias != "FIRST_SERVICE" || gotSchema != "FOCUS_APP" {
+		t.Fatalf("unexpected lister input: user=%q password=%q alias=%q schema=%q", gotUsername, gotPassword, gotAlias, gotSchema)
+	}
+	var payload databaseTablesResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ConnectAlias != "FIRST_SERVICE" || payload.TableCount != 2 || len(payload.Tables) != 2 {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+	if strings.Contains(response.Body.String(), "test-secret") {
+		t.Fatal("response contains the database password")
+	}
+}
+
+func TestTNSGUIDatabaseTablesAPIRedactsPasswordFromErrors(t *testing.T) {
+	tnsAdmin := t.TempDir()
+	path := filepath.Join(tnsAdmin, tnsNamesFileName)
+	if err := os.WriteFile(path, []byte("FIRST_SERVICE = (DESCRIPTION = (ADDRESS = TCP))\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	lister := func(
+		_ context.Context,
+		_ string,
+		password string,
+		_ string,
+		_ string,
+	) ([]databaseTableInfo, error) {
+		return nil, errors.New("connection failed with password " + password)
+	}
+	handler := newTNSGUIHandlerWithTableLister(func(name string) string {
+		if name == "TNS_ADMIN" {
+			return tnsAdmin
+		}
+		return ""
+	}, lister)
+	body := bytes.NewBufferString(`{"username":"ADMIN","password":"do-not-return","schema":"ADMIN"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/database/tables", body)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "do-not-return") || !strings.Contains(response.Body.String(), "[REDACTED]") {
+		t.Fatalf("password was not safely redacted: %s", response.Body.String())
+	}
+}
+
+func TestTNSGUIDatabaseTablesAPIRejectsMissingPassword(t *testing.T) {
+	called := false
+	handler := newTNSGUIHandlerWithTableLister(func(string) string { return "" }, func(
+		context.Context,
+		string,
+		string,
+		string,
+		string,
+	) ([]databaseTableInfo, error) {
+		called = true
+		return nil, nil
+	})
+	body := bytes.NewBufferString(`{"username":"ADMIN","password":"","schema":"ADMIN"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/database/tables", body)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if called {
+		t.Fatal("database lister was called for an invalid request")
 	}
 }
 

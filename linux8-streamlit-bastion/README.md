@@ -30,7 +30,8 @@ On the Oracle Linux 8 server, ensure that:
   are required for an OCI Bastion managed SSH session.
 - The service account and installed FOCUS Loader binary exist:
   `/opt/focus-loader/focus-loader-report-upload`.
-- The `focusloader` account can read the required `tnsnames.ora` file.
+- The `focusloader` account can read `tnsnames.ora` and the Oracle Net/wallet
+  files required to connect, commonly `sqlnet.ora` and `cwallet.sso` for ADB.
 - The server can reach your approved Python package repository during setup.
 
 On the server, run:
@@ -46,31 +47,37 @@ sudo systemctl status sshd
 In the OCI Console, open the instance's **Oracle Cloud Agent** page and verify
 that the **Bastion** plugin is enabled and running.
 
-### Least-privilege access to an Oracle-owned `tnsnames.ora`
+### Least-privilege access to Oracle-owned network files
 
 If `TNS_ADMIN=/home/oracle/adb_wallet` and the wallet must remain owned by
-`oracle`, grant `focusloader` access only to the directory path and
-`tnsnames.ora`:
+`oracle`, grant `focusloader` access only to the directory path and the common
+ADB mTLS runtime files:
 
 ```bash
 sudo dnf install -y acl
 
 sudo chmod 0700 /home/oracle/adb_wallet
 sudo chmod 0600 /home/oracle/adb_wallet/tnsnames.ora
+sudo chmod 0600 /home/oracle/adb_wallet/sqlnet.ora
+sudo chmod 0600 /home/oracle/adb_wallet/cwallet.sso
 
 # Allow focusloader to traverse the two directories.
 sudo setfacl -m u:focusloader:--x /home/oracle
 sudo setfacl -m u:focusloader:--x /home/oracle/adb_wallet
 
-# Allow reading only tnsnames.ora.
+# Allow reading the alias and common ADB mTLS runtime files.
 sudo setfacl -m u:focusloader:r-- \
-  /home/oracle/adb_wallet/tnsnames.ora
+  /home/oracle/adb_wallet/tnsnames.ora \
+  /home/oracle/adb_wallet/sqlnet.ora \
+  /home/oracle/adb_wallet/cwallet.sso
 ```
 
 Verify the effective access before running the installer:
 
 ```bash
 sudo -u focusloader test -r /home/oracle/adb_wallet/tnsnames.ora
+sudo -u focusloader test -r /home/oracle/adb_wallet/sqlnet.ora
+sudo -u focusloader test -r /home/oracle/adb_wallet/cwallet.sso
 sudo -u focusloader head -n 1 /home/oracle/adb_wallet/tnsnames.ora
 sudo getfacl -p /home/oracle /home/oracle/adb_wallet \
   /home/oracle/adb_wallet/tnsnames.ora
@@ -79,9 +86,9 @@ sudo getfacl -p /home/oracle /home/oracle/adb_wallet \
 An `ls /home/oracle/adb_wallet` command may still return `Permission denied`.
 That is expected: directory traversal (`--x`) permits opening the explicitly
 named file but does not permit listing the wallet directory. This ACL is enough
-for the read-only TNS alias service; a process that connects to the database
-may require access to additional wallet files and should use a separately
-reviewed permission policy.
+for the alias and common ADB mTLS connection path. Wallet contents vary; if
+Oracle Net reports another required file, review and grant that file explicitly
+rather than making the wallet directory world-readable.
 
 ## 2. Copy the source and install the UI
 
@@ -92,7 +99,7 @@ copying it to `/opt/focus-loader/src`:
 ```bash
 cd /opt/focus-loader/src
 
-# Build and install the backend that supplies the local read-only API.
+# Build and install the backend that supplies the local TNS/metadata API.
 go mod download
 go mod verify
 CGO_ENABLED=1 go test ./...
@@ -125,6 +132,11 @@ sudo ss -ltnp | grep -E ':(8080|8501)\\b'
 ```
 
 Both listeners must show `127.0.0.1`, not the server's private IP.
+
+The first Streamlit tab uses the first TNS alias and accepts `ADMIN` or another
+Oracle user plus a masked password. It runs only the built-in `ALL_TABLES`
+metadata query; no pre-existing SQL file is needed. The connection closes after
+the result is returned.
 
 ## 3. Create the session and tunnel from a Windows laptop
 
@@ -234,6 +246,8 @@ Then browse to `http://127.0.0.1:18501/`.
 sudo journalctl -u focus-loader-streamlit.service -n 100 --no-pager
 sudo journalctl -u focus-loader-tns-gui.service -n 100 --no-pager
 sudo -u focusloader test -r /opt/oracle/wallet/tnsnames.ora
+sudo -u focusloader test -r /opt/oracle/wallet/sqlnet.ora
+sudo -u focusloader test -r /opt/oracle/wallet/cwallet.sso
 
 # On the laptop: check whether the local forward is listening
 netstat -ano | findstr :8501
@@ -244,6 +258,12 @@ rejected, confirm the OCI CLI profile, Bastion OCID, Compute OCID, target
 private IP, session-management IAM policy, Bastion CIDR allowlist, and that the
 Compute Bastion plugin is running. The launcher preserves OCI CLI stderr and
 prints the complete service diagnostic, including its status code and message.
+
+If the Database tables tab reports an Oracle error, verify the database
+username/password, the first alias, the selected schema owner's visibility in
+`ALL_TABLES`, Oracle client libraries, and every wallet-file permission. An
+`ORA-01017` error normally means invalid credentials; `ORA-12154`, `ORA-12514`,
+or TLS/wallet errors normally indicate Oracle Net, wallet, or network setup.
 
 If the managed session cannot be created, confirm the Oracle Cloud Agent and
 Bastion plugin status, the instance network route/security rules from the

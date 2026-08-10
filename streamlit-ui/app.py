@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import os
 
 import streamlit as st
@@ -12,7 +14,7 @@ from command_builder import (
     build_loader_command,
     build_shell_script,
 )
-from focus_api import AliasCatalog, FocusAPIClient, FocusAPIError, Health
+from focus_api import AliasCatalog, DatabaseTables, FocusAPIClient, FocusAPIError, Health
 
 
 DEFAULT_API_URL = os.getenv("FOCUS_API_URL", "http://127.0.0.1:8080")
@@ -69,6 +71,112 @@ def render_connection(health: Health, catalog: AliasCatalog) -> str:
     return selected
 
 
+def database_tables_csv(result: DatabaseTables) -> str:
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["OWNER", "TABLE_NAME"])
+    for table in result.tables:
+        writer.writerow([table.owner, table.table_name])
+    return output.getvalue()
+
+
+def render_database_tables(api_url: str, catalog: AliasCatalog) -> None:
+    st.subheader("Database tables")
+    st.caption(
+        "Connect with the first TNS alias and list tables visible for one schema. "
+        "The query is fixed and read-only; no SQL file is required."
+    )
+
+    st.text_input(
+        "First TNS alias used for this connection",
+        value=catalog.first_alias,
+        disabled=True,
+    )
+    database_user = st.text_input(
+        "Database user",
+        value="ADMIN",
+        help="Use ADMIN or another unquoted Oracle database user.",
+        key="schema_browser_user",
+    ).strip()
+    use_login_schema = st.checkbox(
+        "List the login user's schema", value=True, key="schema_browser_use_login_schema"
+    )
+    if use_login_schema:
+        schema_owner = database_user.upper()
+        st.caption("Schema owner")
+        st.code(schema_owner or "Enter a database user", language=None)
+    else:
+        schema_owner = st.text_input(
+            "Schema owner",
+            value="FOCUS_APP",
+            help="ADMIN can use this field to inspect another accessible schema.",
+            key="schema_browser_schema",
+        ).strip().upper()
+
+    with st.form("database-table-lookup", clear_on_submit=True):
+        database_password = st.text_input(
+            "Database password",
+            type="password",
+            help="Used only for this connection attempt; never logged or returned by the API.",
+            key="schema_browser_password",
+        )
+        submitted = st.form_submit_button("Connect and list tables", type="primary")
+
+    if submitted:
+        st.session_state.pop("database_tables_result", None)
+        st.session_state.pop("database_tables_error", None)
+        if not database_user:
+            st.session_state["database_tables_error"] = "Database user is required."
+        elif not schema_owner:
+            st.session_state["database_tables_error"] = "Schema owner is required."
+        elif not database_password:
+            st.session_state["database_tables_error"] = "Database password is required."
+        else:
+            try:
+                with st.spinner(f"Connecting to {catalog.first_alias}..."):
+                    result = FocusAPIClient(api_url, timeout_seconds=35.0).schema_tables(
+                        database_user,
+                        database_password,
+                        schema_owner,
+                    )
+                st.session_state["database_tables_result"] = result
+            except FocusAPIError as error:
+                st.session_state["database_tables_error"] = str(error)
+
+    if error := st.session_state.get("database_tables_error"):
+        st.error(error)
+
+    result = st.session_state.get("database_tables_result")
+    if isinstance(result, DatabaseTables):
+        st.success(
+            f"Connected to {result.connect_alias} as {result.username}. "
+            f"Found {len(result.tables)} table(s) in {result.schema}."
+        )
+        st.dataframe(
+            [
+                {"Position": index, "Owner": table.owner, "Table": table.table_name}
+                for index, table in enumerate(result.tables, start=1)
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.download_button(
+            "Download table list as CSV",
+            data=database_tables_csv(result),
+            file_name=f"{result.schema.lower()}-tables.csv",
+            mime="text/csv",
+        )
+        if st.button("Clear database result"):
+            st.session_state.pop("database_tables_result", None)
+            st.session_state.pop("database_tables_error", None)
+            st.rerun()
+
+    st.caption(
+        "The backend opens one connection for this request and closes it after "
+        "the metadata query. The password field clears after submission."
+    )
+
+
 def render_command_builder(selected_alias: str) -> None:
     st.subheader("Loader command builder")
     st.warning(
@@ -94,7 +202,7 @@ def render_command_builder(selected_alias: str) -> None:
             vault_secret_ocid = st.text_input(
                 "OCI Vault secret OCID",
                 placeholder="ocid1.vaultsecret.oc1..replace_me",
-                help="Enter the secret OCID only. Never enter the database password in this UI.",
+                help="Enter the secret OCID only. Never enter a password in the command builder.",
             )
             oci_config_file = st.text_input("OCI config file", value="/home/focusloader/.oci/config")
             oci_profile = st.text_input("OCI profile", value="DEFAULT")
@@ -199,7 +307,10 @@ def main() -> None:
         if st.button("Refresh backend", use_container_width=True):
             st.rerun()
         st.divider()
-        st.caption("The recommended deployment keeps both services on 127.0.0.1.")
+        st.caption(
+            "Both services must remain on 127.0.0.1. Enter database credentials "
+            "only through the protected SSH/OCI Bastion tunnel."
+        )
 
     health, catalog, error = read_backend(api_url)
     if error or health is None or catalog is None:
@@ -210,9 +321,11 @@ def main() -> None:
         )
         st.stop()
 
-    connection_tab, builder_tab, diagnostics_tab = st.tabs(
-        ["Connection", "Command builder", "Diagnostics"]
+    database_tab, connection_tab, builder_tab, diagnostics_tab = st.tabs(
+        ["Database tables", "Connection", "Command builder", "Diagnostics"]
     )
+    with database_tab:
+        render_database_tables(api_url, catalog)
     with connection_tab:
         selected_alias = render_connection(health, catalog)
     with builder_tab:
