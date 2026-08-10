@@ -26,23 +26,29 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
   and lists every table in the created schema.
 - Read-only display of the first TNS alias and `tnsnames.ora` source path.
 - Interactive selection from every alias in the file.
-- Form-based loader command builder for database load, pre-load report,
-  upload-only, and upload-and-load modes.
-- Instance-principal and OCI config-file authentication choices.
-- Validation for required values, dates, workers, upload destinations, and
-  control characters.
+- Form-based loader command builder with direct database password as the default
+  and OCI Vault secret OCID/profile as the alternative.
+- Editable fields for every value in the documented pre-load example, including
+  OCI profile, user, alias, namespace, date, workers, and `-ts1` through `-ts4`.
+- Explicit checkboxes for pre-load, continuation, metadata-only scanning,
+  upload/load, force, tag skips, work-file retention, and verbose CLI flags.
+- Instance-principal and OCI config/profile authentication choices, plus
+  validation for required values, flag interactions, dates, workers, upload
+  destinations, and control characters.
 - POSIX-safe command quoting and shell-script download.
 - Diagnostics page with local API commands and non-secret backend metadata.
 - Python unit tests, Go API/parser tests, a systemd service, an automated
   installer, and a deployed-service smoke-test script.
 
-The command builder does **not** execute the generated command and still accepts
-only a Vault secret OCID for the loader's `-ds` option. After a successful first-
-tab connection, the Go backend retains the administrator credentials only in
-memory behind a random, 15-minute, one-use deployment token. Streamlit stores
-only that opaque token, never the password. Both password forms are masked and
-cleared; passwords are never logged, written to a configuration file, or
-returned by the API.
+The command builder does **not** execute the generated command. For direct
+password authentication, it validates a masked field but places only a redacted
+marker in the preview; the downloaded script prompts again with terminal echo
+disabled and never contains the submitted value. Vault mode emits `-ds` and
+optional `-dst`. After a successful first-tab connection, the Go backend retains
+the administrator credentials only in memory behind a random, 15-minute,
+one-use deployment token. Streamlit stores only that opaque token, never the
+password. All password forms are masked and cleared; passwords are never logged,
+written to a configuration file by the web application, or returned by the API.
 
 ## Architecture
 
@@ -117,7 +123,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.7.0-schema-deployment-ui"
+  "version": "26.8.0-command-builder-flags"
 }
 ```
 
@@ -273,7 +279,7 @@ sudo install -o focusloader -g focusloader -m 0750 \
 Expected version:
 
 ```text
-focus-loader-report-upload 26.7.0-schema-deployment-ui
+focus-loader-report-upload 26.8.0-command-builder-flags
 ```
 
 ## 2. Verify TNS permissions
@@ -526,18 +532,29 @@ additional deployment. Closing/restarting the Go service also invalidates it.
 
 ### Command builder tab
 
-1. Choose the processing mode.
-2. Choose instance-principal or OCI config-file authentication.
-3. Enter the database username and selected TNS alias.
-4. Enter the Vault secret OCID, never the password value.
-5. Set source, destination, date, worker, and optional replay values.
-6. Select **Validate and build command**.
-7. Review the safely quoted command.
-8. Download the shell script if required.
-9. Review the downloaded file and execute it manually under the approved
+1. Choose **OCI config/profile** to emit `-t DEFAULT` and optional `-c`, or
+   choose **Instance principal** to emit `-ip`.
+2. Keep the default **Database password** mode for `-dp`, or choose
+   **OCI Vault secret** for `-ds` and optional `-dst`.
+3. Enter the database user, selected alias, and the credential required by the
+   selected database-authentication mode.
+4. Edit namespace, starting date, worker count, exact object, and optional
+   source bucket values.
+5. Review or edit all four special-tag text fields.
+6. Set upload destination values when enabling the upload checkbox.
+7. Select each required CLI flag in **Flags**. The defaults reproduce the
+   requested pre-load/continue/metadata-only/tag-row-skip command.
+8. Select **Validate and build command** and review the safely quoted preview.
+9. Download the shell script if required, review it, and execute it under the approved
    service account and change window.
 
-The generated file includes `set -euo pipefail`. It is not run by Streamlit.
+The generated file includes `set -euo pipefail`. In direct-password mode the
+preview shows `[DATABASE_PASSWORD_PROMPT]` and the downloaded script uses a
+hidden terminal prompt before supplying `-dp`; the submitted field value is not
+stored in either artifact. Once executed, the loader's `-dp` argument may still
+be visible to same-host process inspection. Use the direct-password script only
+interactively on a controlled host; prefer OCI Vault for scheduled/shared runs.
+The script is not run by Streamlit.
 
 ### Diagnostics tab
 
@@ -589,7 +606,7 @@ sudo grep '^FOCUS_API_URL=' /etc/focus-loader/streamlit.env
 ```
 
 An older binary does not have `/api/v1/schema/deploy`; install the
-`26.7.0-schema-deployment-ui` binary before using the second tab.
+`26.8.0-command-builder-flags` binary before using the current interface.
 
 ### The alias endpoint returns an error
 
@@ -695,7 +712,7 @@ directory to roll back application code.
 - The browser cannot override the backend URL.
 - Streamlit does not read the wallet or TNS file.
 - The API does not return connect descriptors or wallet contents.
-- Both credential forms mask and clear their passwords after submission.
+- All password forms mask and clear their values after submission.
 - The administrator password is retained only in Go process memory for at most
   15 minutes behind a random one-use token. Streamlit stores only the token.
 - The target password exists only for the deployment request and created-schema
@@ -712,7 +729,9 @@ directory to roll back application code.
   `focus.conf` files.
 - `dropExisting` defaults to false and destructive replacement requires explicit
   UI confirmation. Use database auditing/change controls for production runs.
-- The command builder remains separate and never requests a database password.
+- The command builder remains separate from execution. Its password preview is
+  redacted, its downloaded script prompts securely at runtime, and neither
+  artifact stores the submitted password.
 - The UI generates but never executes loader commands.
 - Shell arguments are represented as an argument list and POSIX-quoted.
 - The services run as the unprivileged `focusloader` account with systemd

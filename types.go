@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.7.0-schema-deployment-ui"
+	version       = "26.8.0-command-builder-flags"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

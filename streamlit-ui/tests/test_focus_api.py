@@ -29,10 +29,10 @@ class RecordingOpener:
 
 class FocusAPIClientTests(unittest.TestCase):
     def test_health(self):
-        opener = RecordingOpener({"status": "ok", "version": "26.6.0-schema-browser"})
+        opener = RecordingOpener({"status": "ok", "version": "26.8.0-command-builder-flags"})
         result = FocusAPIClient("http://127.0.0.1:8080/", opener=opener).health()
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.version, "26.6.0-schema-browser")
+        self.assertEqual(result.version, "26.8.0-command-builder-flags")
         self.assertEqual(opener.urls[0][0], "http://127.0.0.1:8080/api/v1/health")
 
     def test_aliases(self):

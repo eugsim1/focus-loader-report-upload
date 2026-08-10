@@ -378,74 +378,150 @@ def render_command_builder(selected_alias: str) -> None:
     st.subheader("Loader command builder")
     st.warning(
         "This page validates and previews a command; it does not execute it. "
-        "Review downloaded scripts before running them on Oracle Linux."
+        "The downloaded direct-password script prompts securely at runtime so "
+        "the entered password is never displayed or saved. During execution, "
+        "-dp may still be visible to same-host process inspection; prefer Vault "
+        "for scheduled or shared systems."
     )
 
-    with st.form("loader-command-builder"):
-        general, source, destination, options = st.tabs(
-            ["General", "Source", "Destination", "Options"]
+    with st.form("loader-command-builder", clear_on_submit=True):
+        authentication, source, tags, destination, flags = st.tabs(
+            ["Authentication", "Source", "Tag fields", "Destination", "Flags"]
         )
-        with general:
-            mode = st.selectbox(
-                "Processing mode",
-                ["Pre-load report", "Database load", "Upload only", "Upload and load"],
-            )
-            auth_mode = st.radio(
-                "OCI authentication", ["Instance principal", "OCI config file"], horizontal=True
-            )
+        with authentication:
             executable = st.text_input("Loader executable", value=DEFAULT_EXECUTABLE)
-            database_user = st.text_input("Database user", value="FOCUS_APP")
-            database_alias = st.text_input("Database alias", value=selected_alias)
-            vault_secret_ocid = st.text_input(
-                "OCI Vault secret OCID",
-                placeholder="ocid1.vaultsecret.oc1..replace_me",
-                help="Enter the secret OCID only. Never enter a password in the command builder.",
+            oci_auth_mode = st.radio(
+                "OCI authentication",
+                ["OCI config/profile", "Instance principal"],
+                horizontal=True,
+                help=(
+                    "Config/profile emits -t and optional -c. Instance principal "
+                    "emits -ip."
+                ),
             )
-            oci_config_file = st.text_input("OCI config file", value="/home/focusloader/.oci/config")
-            oci_profile = st.text_input("OCI profile", value="DEFAULT")
+            oci_config_file = st.text_input(
+                "OCI config file (-c)",
+                placeholder="Optional, for example /home/focusloader/.oci/config",
+            )
+            oci_profile = st.text_input("OCI profile (-t)", value="DEFAULT")
+            database_auth_mode = st.radio(
+                "Database authentication",
+                ["Database password", "OCI Vault secret"],
+                horizontal=True,
+                help="Direct database password is selected by default.",
+            )
+            database_user = st.text_input("Database user (-du)", value="FOCUS_GIT1")
+            database_alias = st.text_input("Database alias (-dn)", value=selected_alias)
+            database_password = st.text_input(
+                "Database password (-dp)",
+                type="password",
+                help=(
+                    "Required when Database password is selected. It is validated "
+                    "but never placed in the preview, downloaded file, logs, or "
+                    "Streamlit session result; the downloaded script prompts again."
+                ),
+            )
+            vault_secret_ocid = st.text_input(
+                "OCI Vault secret OCID (-ds)",
+                placeholder="ocid1.vaultsecret.oc1..replace_me",
+                help="Used only when OCI Vault secret is selected.",
+            )
+            vault_secret_profile = st.text_input(
+                "Vault secret profile (-dst)",
+                placeholder="Optional; blank/local uses instance principal",
+            )
 
         with source:
-            source_namespace = st.text_input("Source namespace", value="bling")
-            source_bucket = st.text_input("Source bucket", placeholder="Optional")
-            minimum_date = st.text_input("Minimum date", placeholder="YYYY-MM-DD")
+            source_namespace = st.text_input("Source namespace (-ns)", value="bling")
+            source_bucket = st.text_input("Source bucket (-bn)", placeholder="Optional")
+            minimum_date = st.text_input("Starting date (-d)", value="2026-01-01")
             exact_object = st.text_input(
-                "Exact object", placeholder="FOCUS Reports/YYYY/MM/DD/file.csv.gz"
+                "Exact object (-f)", placeholder="FOCUS Reports/YYYY/MM/DD/file.csv.gz"
             )
-            workers = st.number_input("Workers", min_value=1, max_value=128, value=1, step=1)
+            workers = st.number_input(
+                "Number of workers (-workers)", min_value=1, max_value=128, value=5, step=1
+            )
+
+        with tags:
+            tag_special1 = st.text_input(
+                "Special tag 1 (-ts1)", value="Oracle-Tags.CreatedBy"
+            )
+            tag_special2 = st.text_input(
+                "Special tag 2 (-ts2)", value="CCA_Basic_Tag.email"
+            )
+            tag_special3 = st.text_input(
+                "Special tag 3 (-ts3)", value="Oracle_Tags.CreatedBy"
+            )
+            tag_special4 = st.text_input(
+                "Special tag 4 (-ts4)", value="Oracle_Tags.CreatedOn"
+            )
 
         with destination:
-            destination_namespace = st.text_input("Destination namespace", placeholder="Optional")
-            destination_bucket = st.text_input("Destination bucket")
-            destination_prefix = st.text_input("Destination prefix", value="transformed-focus")
+            destination_namespace = st.text_input(
+                "Destination namespace (-report-upload-namespace)", placeholder="Optional"
+            )
+            destination_bucket = st.text_input(
+                "Destination bucket (-report-upload-bucket)", placeholder="Required with upload"
+            )
+            destination_prefix = st.text_input(
+                "Destination prefix (-report-upload-prefix)", value="transformed-focus"
+            )
 
-        with options:
-            force = st.checkbox("Force controlled replay")
-            skip_tags = st.checkbox("Skip tag processing")
-            keep_work_files = st.checkbox("Keep work files")
-            verbose = st.checkbox("Verbose diagnostics")
+        with flags:
+            left, right = st.columns(2)
+            with left:
+                preload_report = st.checkbox("Pre-load report (-preload-report)", value=True)
+                continue_after_report = st.checkbox(
+                    "Continue after report (-continue-after-report)", value=True
+                )
+                skip_preload_content_scan = st.checkbox(
+                    "Skip pre-load content scan (-skip-preload-content-scan)", value=True
+                )
+                upload_reports = st.checkbox("Upload reports (-upload-reports)")
+                load_after_upload = st.checkbox("Load after upload (-load-after-upload)")
+                force = st.checkbox("Force controlled replay (-force)")
+            with right:
+                skip_tags = st.checkbox("Skip all tag processing (-skip-tags)")
+                skip_tag_rows = st.checkbox("Skip tag rows (-skip-tag-rows)", value=True)
+                skip_tag_keys = st.checkbox("Skip tag keys (-skip-tag-keys)")
+                keep_work_files = st.checkbox("Keep work files (-keep-work-files)")
+                verbose = st.checkbox("Verbose diagnostics (-verbose)")
 
         submitted = st.form_submit_button("Validate and build command", type="primary")
 
     if submitted:
         config = LoaderCommandConfig(
             executable=executable.strip(),
-            mode=mode,
-            auth_mode=auth_mode,
+            oci_auth_mode=oci_auth_mode,
+            database_auth_mode=database_auth_mode,
             database_user=database_user.strip(),
             database_alias=database_alias.strip(),
+            database_password=database_password,
             vault_secret_ocid=vault_secret_ocid.strip(),
+            vault_secret_profile=vault_secret_profile.strip(),
             source_namespace=source_namespace.strip(),
             source_bucket=source_bucket.strip(),
             oci_config_file=oci_config_file.strip(),
             oci_profile=oci_profile.strip(),
             minimum_date=minimum_date.strip(),
             workers=int(workers),
+            exact_object=exact_object.strip(),
+            tag_special1=tag_special1.strip(),
+            tag_special2=tag_special2.strip(),
+            tag_special3=tag_special3.strip(),
+            tag_special4=tag_special4.strip(),
             destination_namespace=destination_namespace.strip(),
             destination_bucket=destination_bucket.strip(),
             destination_prefix=destination_prefix.strip(),
-            exact_object=exact_object.strip(),
+            preload_report=preload_report,
+            continue_after_report=continue_after_report,
+            skip_preload_content_scan=skip_preload_content_scan,
+            upload_reports=upload_reports,
+            load_after_upload=load_after_upload,
             force=force,
             skip_tags=skip_tags,
+            skip_tag_rows=skip_tag_rows,
+            skip_tag_keys=skip_tag_keys,
             keep_work_files=keep_work_files,
             verbose=verbose,
         )
@@ -459,6 +535,10 @@ def render_command_builder(selected_alias: str) -> None:
             st.error(str(error))
 
     if command := st.session_state.get("loader_command"):
+        st.caption(
+            "[DATABASE_PASSWORD_PROMPT] is deliberately redacted. The downloaded "
+            "script requests the password with a hidden terminal prompt."
+        )
         st.code(command, language="bash", wrap_lines=True)
         st.download_button(
             "Download reviewed command",

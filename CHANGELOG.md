@@ -1,5 +1,21 @@
 # Changelog
 
+## 26.8.0-command-builder-flags
+
+- Reworked the Streamlit command builder so direct `-dp` database-password
+  authentication is the default and OCI Vault `-ds`/`-dst` authentication is
+  available as an explicit alternative.
+- Added editable inputs for the OCI profile/config, database user and alias,
+  namespace, starting date, worker count, exact object, upload destinations, and
+  `-ts1` through `-ts4`, with defaults matching the requested pre-load command.
+- Replaced the hidden processing-mode mapping with checkboxes for pre-load,
+  continuation, metadata-only scan, upload/load, force, tag skips, work-file
+  retention, and verbose flags, including CLI-compatible validation.
+- Keep submitted direct passwords out of the preview, downloaded file, logs,
+  and Streamlit result state; the generated script uses a hidden terminal prompt
+  and passes the password through `-dp` only at execution time.
+- Expanded command-builder tests and security/operation documentation.
+
 ## 26.7.0-schema-deployment-ui
 
 - Added a second Streamlit **Deploy schema** tab that appears only after a

@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.7.0-schema-deployment-ui`
+Version `26.8.0-command-builder-flags`
 
 > **Independent project disclaimer**
 >
@@ -110,18 +110,22 @@ Current interactions include:
   output, and lists the created schema's tables using its submitted password;
 - display and selection of every alias in `$TNS_ADMIN/tnsnames.ora`;
 - diagnostic API output without connect descriptors or wallet content;
-- a validated command builder covering all four loader processing modes;
+- a validated command builder with direct-password or OCI Vault database
+  authentication, editable values, and explicit CLI flag checkboxes;
 - POSIX-safe command preview and reviewed shell-script download.
 
-The command-builder tab deliberately does not execute generated commands and
-never asks for a database password. A successful first-tab login creates a
+The command-builder tab deliberately does not execute generated commands. Its
+default direct-password form is masked and cleared; the preview and downloaded
+file never contain that password, and the downloaded script prompts again in
+the terminal before passing `-dp`. OCI Vault `-ds`/`-dst` is the alternative.
+A successful first-tab login creates a
 random, 15-minute, one-use token; Streamlit stores that opaque token instead of
 the administrator password. The second tab can execute only the installed fixed
 deployment script, with server-controlled TNS and configuration paths. Both
 services bind to loopback by default and are reached through SSH/OCI Bastion or
 an authenticated TLS reverse proxy.
 
-Quick deployment after installing the `26.7.0-schema-deployment-ui` Go binary:
+Quick deployment after installing the `26.8.0-command-builder-flags` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip

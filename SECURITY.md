@@ -18,7 +18,11 @@ Do not report suspected vulnerabilities in a public issue. Use GitHub's private 
   limited to one installed script, requires a successful database login plus a
   random 15-minute one-use token, and accepts no command or script path from the
   browser. Keep database/OS auditing and approved change controls enabled.
-- Enter database passwords only in the two masked database/deployment forms over
+- The command builder's direct-password field is masked and cleared. Its value
+  is validated only for the current render and is never placed in the preview,
+  downloaded script, logs, or saved result; the generated script prompts again
+  in the terminal. Prefer OCI Vault for scheduled or shared operation.
+- Enter database passwords only in masked forms over
   the protected loopback SSH/OCI Bastion path. Never enter a private key, wallet
   content, OCI API key, or Vault secret value in the Streamlit interface.
 
