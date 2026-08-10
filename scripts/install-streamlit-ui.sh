@@ -30,6 +30,10 @@ if [[ ! -x "${APP_DIR}/focus-loader-report-upload" ]]; then
   echo "ERROR: ${APP_DIR}/focus-loader-report-upload is not installed or executable" >&2
   exit 1
 fi
+if ! runuser -u "${SERVICE_USER}" -- test -x "${APP_DIR}/focus-loader-report-upload"; then
+  echo "ERROR: ${SERVICE_USER} cannot execute ${APP_DIR}/focus-loader-report-upload" >&2
+  exit 1
+fi
 if [[ ! -r "${TNS_ADMIN}/tnsnames.ora" ]]; then
   echo "ERROR: cannot read ${TNS_ADMIN}/tnsnames.ora" >&2
   exit 1
@@ -51,6 +55,7 @@ fi
 install -d -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0750 "${APP_DIR}/streamlit-ui"
 install -d -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0750 "${APP_DIR}/streamlit-ui/.streamlit"
 install -d -o root -g "${SERVICE_GROUP}" -m 0750 "${APP_DIR}/sql_scripts"
+install -d -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0750 "${APP_DIR}/work_report_dir"
 install -d -o root -g "${SERVICE_GROUP}" -m 0750 /etc/focus-loader
 
 install -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0640 \
@@ -94,8 +99,9 @@ fi
 chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${APP_DIR}/streamlit-ui/.venv"
 
 SQLPLUS_DIR=$(cd -- "$(dirname -- "${SQLPLUS_BIN}")" && pwd)
-printf 'TNS_ADMIN=%s\nFOCUS_SQL_SCRIPTS_DIR=%s\nPATH=%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin\n' \
-  "${TNS_ADMIN}" "${APP_DIR}/sql_scripts" "${SQLPLUS_DIR}" \
+printf 'TNS_ADMIN=%s\nFOCUS_SQL_SCRIPTS_DIR=%s\nFOCUS_LOADER_EXECUTABLE=%s\nFOCUS_LOADER_WORK_DIR=%s\nPATH=%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin\n' \
+  "${TNS_ADMIN}" "${APP_DIR}/sql_scripts" \
+  "${APP_DIR}/focus-loader-report-upload" "${APP_DIR}" "${SQLPLUS_DIR}" \
   > /etc/focus-loader/tns-gui.env
 chown root:"${SERVICE_GROUP}" /etc/focus-loader/tns-gui.env
 chmod 0640 /etc/focus-loader/tns-gui.env

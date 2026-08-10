@@ -30,6 +30,7 @@ func parseArgs(args []string) (commandLine, error) {
 	fs.BoolVar(&cmd.force, "force", false, "Force Update without updated file")
 	fs.StringVar(&cmd.ctlFile, "ctl", "focus.ctl", "Path to SQL*Loader control file")
 	fs.StringVar(&cmd.dbPassword, "dp", "", "ADB Password")
+	fs.BoolVar(&cmd.dbPasswordStdin, "dp-stdin", false, "Read ADB password from standard input")
 	fs.IntVar(&cmd.workers, "workers", 1, "Number of files to process concurrently")
 	fs.StringVar(&cmd.stateFile, "state-file", filepath.Join(workReportDir, "processed_files.jsonl"), "Restart checkpoint file")
 	fs.BoolVar(&cmd.keepWorkFiles, "keep-work-files", false, "Keep downloaded gzip and generated CSV files after successful load")
@@ -56,6 +57,9 @@ func parseArgs(args []string) (commandLine, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return cmd, err
+	}
+	if cmd.dbPasswordStdin && (cmd.dbPassword != "" || cmd.dbSecretID != "") {
+		return cmd, fmt.Errorf("-dp-stdin cannot be combined with -dp or -ds")
 	}
 	if cmd.skipTags {
 		cmd.skipTagRows = true
@@ -102,6 +106,7 @@ func printUsage() {
 	fmt.Println("  -force        Force Update without updated file")
 	fmt.Println("  -ctl string   SQL*Loader control file (default focus.ctl)")
 	fmt.Println("  -dp string    ADB Password")
+	fmt.Println("  -dp-stdin     Read ADB password from standard input (cannot combine with -dp or -ds)")
 	fmt.Println("  -workers int  Number of files to process concurrently (default 1)")
 	fmt.Println("  -state-file   Restart checkpoint file (default work_report_dir/processed_files.jsonl)")
 	fmt.Println("  -keep-work-files")

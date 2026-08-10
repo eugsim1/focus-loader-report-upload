@@ -7,7 +7,9 @@ from command_builder import (
     LoaderCommandConfig,
     build_loader_arguments,
     build_loader_command,
+    build_loader_execution_payload,
     build_shell_script,
+    execution_config_without_password,
 )
 
 
@@ -37,6 +39,21 @@ def base_config(**overrides):
 
 
 class CommandBuilderTests(unittest.TestCase):
+    def test_requested_flags_are_dataclass_defaults(self):
+        config = LoaderCommandConfig(
+            executable="/opt/focus-loader/focus-loader-report-upload",
+            oci_auth_mode="OCI config/profile",
+            database_auth_mode="Database password",
+            database_user="FOCUS_APP",
+            database_alias="FOCUS_HIGH",
+            database_password="test-only-password",
+            source_namespace="bling",
+        )
+        self.assertTrue(config.preload_report)
+        self.assertTrue(config.skip_preload_content_scan)
+        self.assertTrue(config.skip_tag_rows)
+        self.assertTrue(config.continue_after_report)
+
     def test_requested_preload_command_fields_and_flags(self):
         config = base_config()
         arguments = build_loader_arguments(config)
@@ -74,6 +91,19 @@ class CommandBuilderTests(unittest.TestCase):
         self.assertIn("read -r -s", script)
         self.assertIn('-dp "${FOCUS_DB_PASSWORD}"', script)
 
+    def test_execution_payload_uses_runtime_password_and_structured_fields(self):
+        stored = execution_config_without_password(base_config(database_password="build-only"))
+        self.assertEqual(stored.database_password, "")
+        payload = build_loader_execution_payload(stored, "runtime-only")
+        self.assertEqual(payload["databasePassword"], "runtime-only")
+        self.assertEqual(payload["databaseUser"], "FOCUS_GIT1")
+        self.assertEqual(payload["workers"], 5)
+        self.assertTrue(payload["preloadReport"])
+        self.assertTrue(payload["skipPreloadContentScan"])
+        self.assertTrue(payload["skipTagRows"])
+        self.assertTrue(payload["continueAfterReport"])
+        self.assertNotIn("executable", payload)
+
     def test_vault_secret_authentication(self):
         config = base_config(
             database_auth_mode="OCI Vault secret",
@@ -88,6 +118,14 @@ class CommandBuilderTests(unittest.TestCase):
         )
         self.assertEqual(arguments[arguments.index("-dst") + 1], "DEFAULT")
         self.assertNotIn("read -r -s", build_shell_script(config))
+        payload = build_loader_execution_payload(
+            execution_config_without_password(config)
+        )
+        self.assertEqual(payload["databaseAuthMode"], "vault")
+        self.assertEqual(payload["databasePassword"], "")
+        self.assertEqual(
+            payload["vaultSecretOcid"], "ocid1.vaultsecret.oc1..example"
+        )
 
     def test_instance_principal_authentication(self):
         arguments = build_loader_arguments(

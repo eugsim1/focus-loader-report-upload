@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.8.1-schema-drop-checkbox"
+	version       = "26.9.0-loader-execution-ui"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )
@@ -36,6 +36,7 @@ type commandLine struct {
 	force                  bool
 	ctlFile                string
 	dbPassword             string
+	dbPasswordStdin        bool
 	workers                int
 	stateFile              string
 	keepWorkFiles          bool

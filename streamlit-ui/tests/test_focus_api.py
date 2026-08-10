@@ -29,10 +29,10 @@ class RecordingOpener:
 
 class FocusAPIClientTests(unittest.TestCase):
     def test_health(self):
-        opener = RecordingOpener({"status": "ok", "version": "26.8.1-schema-drop-checkbox"})
+        opener = RecordingOpener({"status": "ok", "version": "26.9.0-loader-execution-ui"})
         result = FocusAPIClient("http://127.0.0.1:8080/", opener=opener).health()
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.version, "26.8.1-schema-drop-checkbox")
+        self.assertEqual(result.version, "26.9.0-loader-execution-ui")
         self.assertEqual(opener.urls[0][0], "http://127.0.0.1:8080/api/v1/health")
 
     def test_aliases(self):
@@ -145,6 +145,83 @@ class FocusAPIClientTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 1)
         self.assertIn("sqlplus not found", result.output)
         self.assertIn("deployment failed", result.error)
+
+    def test_start_loader_job_posts_structured_payload_and_parses_live_counts(self):
+        opener = RecordingOpener(
+            {
+                "jobId": "safe-job-token",
+                "status": "running",
+                "databaseUser": "FOCUS_APP",
+                "databaseAlias": "FOCUS_HIGH",
+                "tableName": "TEMP_OCI_FOCUS",
+                "startedAtUtc": "2026-08-10T12:00:00Z",
+                "finishedAtUtc": "",
+                "exitCode": None,
+                "initialRowCount": 100,
+                "initialRowCountKnown": True,
+                "currentRowCount": 125,
+                "currentRowCountKnown": True,
+                "rowsInserted": 25,
+                "rowsInsertedKnown": True,
+                "rowCountUpdatedAtUtc": "2026-08-10T12:00:05Z",
+                "rowCountError": "",
+                "output": "",
+                "error": "",
+            }
+        )
+        request_body = {
+            "databaseUser": "FOCUS_APP",
+            "databasePassword": "runtime-only",
+        }
+        result = FocusAPIClient("http://127.0.0.1:8080", opener=opener).start_loader_job(
+            request_body
+        )
+        self.assertEqual(result.rows_inserted, 25)
+        self.assertEqual(result.current_row_count, 125)
+        self.assertFalse(result.terminal)
+        request = opener.requests[0]
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(request.full_url, "http://127.0.0.1:8080/api/v1/loader/jobs")
+        self.assertEqual(json.loads(request.data.decode("utf-8")), request_body)
+        self.assertNotIn("runtime-only", request.full_url)
+
+    def test_loader_job_status_parses_terminal_result(self):
+        opener = RecordingOpener(
+            {
+                "jobId": "safe-job-token",
+                "status": "succeeded",
+                "databaseUser": "FOCUS_APP",
+                "databaseAlias": "FOCUS_HIGH",
+                "tableName": "TEMP_OCI_FOCUS",
+                "startedAtUtc": "2026-08-10T12:00:00Z",
+                "finishedAtUtc": "2026-08-10T12:01:00Z",
+                "exitCode": 0,
+                "initialRowCount": 100,
+                "initialRowCountKnown": True,
+                "currentRowCount": 150,
+                "currentRowCountKnown": True,
+                "rowsInserted": 50,
+                "rowsInsertedKnown": True,
+                "rowCountUpdatedAtUtc": "2026-08-10T12:01:00Z",
+                "rowCountError": "",
+                "output": "Completed",
+                "error": "",
+            }
+        )
+        result = FocusAPIClient("http://127.0.0.1:8080", opener=opener).loader_job(
+            "safe-job-token"
+        )
+        self.assertTrue(result.terminal)
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.output, "Completed")
+        self.assertEqual(
+            opener.urls[0][0],
+            "http://127.0.0.1:8080/api/v1/loader/jobs/safe-job-token",
+        )
+
+    def test_loader_job_rejects_unsafe_job_id(self):
+        with self.assertRaisesRegex(FocusAPIError, "job id"):
+            FocusAPIClient("http://127.0.0.1:8080").loader_job("../unsafe")
 
     def test_connection_error_is_safe(self):
         def failing_opener(request, timeout):

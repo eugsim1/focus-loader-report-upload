@@ -14,14 +14,25 @@ Do not report suspected vulnerabilities in a public issue. Use GitHub's private 
 - Review schema-deployment scripts before execution; destructive options must be tested in a disposable environment first.
 - Validate transformed totals against OCI Cost Analysis and official cost reports before using the output for financial decisions.
 - Keep the optional Go API and Streamlit frontend bound to loopback unless they are protected by an authenticated TLS reverse proxy and restricted network policy.
-- The Streamlit command builder is preview-only. The separate deployment API is
-  limited to one installed script, requires a successful database login plus a
-  random 15-minute one-use token, and accepts no command or script path from the
-  browser. Keep database/OS auditing and approved change controls enabled.
+- The command builder only validates/previews. The separate deployment API is
+  limited to one installed script and a random 15-minute one-use token. The
+  execution API accepts structured fields only, starts one fixed installed
+  loader at a time, restricts aliases to the server TNS catalog, and enforces a
+  24-hour timeout. Neither endpoint accepts browser-supplied shell text or an
+  executable/script path. Keep database/OS auditing and approved change controls
+  enabled.
 - The command builder's direct-password field is masked and cleared. Its value
   is validated only for the current render and is never placed in the preview,
   downloaded script, logs, or saved result; the generated script prompts again
   in the terminal. Prefer OCI Vault for scheduled or shared operation.
+- The execution tab asks for a direct password again, sends it only over the
+  protected loopback connection, and the Go backend passes it to the child over
+  stdin rather than command arguments. Direct or Vault-resolved passwords remain
+  in backend memory only while required for execution/row monitoring and are
+  redacted from bounded final output.
+- Live monitoring runs only fixed `SELECT COUNT(*) FROM TEMP_OCI_FOCUS` SQL as
+  the selected database user. It reports committed total rows and the delta from
+  the pre-run baseline; it never accepts browser-supplied SQL/table names.
 - Enter database passwords only in masked forms over
   the protected loopback SSH/OCI Bastion path. Never enter a private key, wallet
   content, OCI API key, or Vault secret value in the Streamlit interface.

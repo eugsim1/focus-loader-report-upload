@@ -66,7 +66,7 @@ func runTNSGUI(ctx context.Context, listenAddress string) error {
 		fmt.Println("WARNING: the TNS GUI has no built-in authentication; use a firewall or reverse proxy before exposing it")
 	}
 	fmt.Printf("TNS GUI listening on http://%s\n", listener.Addr().String())
-	fmt.Println("The service reads TNS aliases, lists schema tables, and runs the fixed schema deployment script after a successful login.")
+	fmt.Println("The service reads TNS aliases, lists schema tables, deploys the fixed schema, and runs validated loader jobs.")
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -116,6 +116,20 @@ func newTNSGUIHandlerWithServices(
 	lister databaseTableLister,
 	runner schemaDeploymentRunner,
 ) http.Handler {
+	return newTNSGUIHandlerWithLoaderService(
+		getenv,
+		lister,
+		runner,
+		newLoaderExecutionService(getenv),
+	)
+}
+
+func newTNSGUIHandlerWithLoaderService(
+	getenv func(string) string,
+	lister databaseTableLister,
+	runner schemaDeploymentRunner,
+	loaderService *loaderExecutionService,
+) http.Handler {
 	sessions := newSchemaDeploymentSessionStore()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
@@ -144,6 +158,8 @@ func newTNSGUIHandlerWithServices(
 	mux.HandleFunc("/api/v1/schema/deploy", func(w http.ResponseWriter, r *http.Request) {
 		handleSchemaDeployment(w, r, getenv, sessions, runner, lister)
 	})
+	mux.HandleFunc(loaderJobCollectionPath, loaderService.handleCollection)
+	mux.HandleFunc(loaderJobPathPrefix, loaderService.handleItem)
 	mux.HandleFunc("/api/tns-alias", func(w http.ResponseWriter, r *http.Request) {
 		setTNSGUIJSONHeaders(w)
 		if !requireTNSGUIGet(w, r) {

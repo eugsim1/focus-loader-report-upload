@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
 
@@ -35,14 +35,14 @@ class LoaderCommandConfig:
     destination_namespace: str = ""
     destination_bucket: str = ""
     destination_prefix: str = ""
-    preload_report: bool = False
-    continue_after_report: bool = False
-    skip_preload_content_scan: bool = False
+    preload_report: bool = True
+    continue_after_report: bool = True
+    skip_preload_content_scan: bool = True
     upload_reports: bool = False
     load_after_upload: bool = False
     force: bool = False
     skip_tags: bool = False
-    skip_tag_rows: bool = False
+    skip_tag_rows: bool = True
     skip_tag_keys: bool = False
     keep_work_files: bool = False
     verbose: bool = False
@@ -123,6 +123,78 @@ def build_loader_command(config: LoaderCommandConfig) -> str:
     """Return a safe preview that never contains the submitted password."""
 
     return shlex.join(build_loader_arguments(config))
+
+
+def execution_config_without_password(config: LoaderCommandConfig) -> LoaderCommandConfig:
+    """Return the validated configuration without retaining a direct password."""
+
+    _validate(config)
+    return replace(config, database_password="")
+
+
+def build_loader_execution_payload(
+    config: LoaderCommandConfig,
+    database_password: str = "",
+) -> dict[str, object]:
+    """Build the structured job request; the backend controls the executable."""
+
+    runtime_config = replace(
+        config,
+        database_password=(
+            database_password if config.database_auth_mode == "Database password" else ""
+        ),
+    )
+    _validate(runtime_config)
+    return {
+        "ociAuthMode": (
+            "instance_principal"
+            if runtime_config.oci_auth_mode == "Instance principal"
+            else "config_profile"
+        ),
+        "databaseAuthMode": (
+            "vault"
+            if runtime_config.database_auth_mode == "OCI Vault secret"
+            else "password"
+        ),
+        "ociConfigFile": runtime_config.oci_config_file,
+        "ociProfile": runtime_config.oci_profile,
+        "databaseUser": runtime_config.database_user,
+        "databaseAlias": runtime_config.database_alias,
+        "databasePassword": runtime_config.database_password,
+        "vaultSecretOcid": (
+            runtime_config.vault_secret_ocid
+            if runtime_config.database_auth_mode == "OCI Vault secret"
+            else ""
+        ),
+        "vaultSecretProfile": (
+            runtime_config.vault_secret_profile
+            if runtime_config.database_auth_mode == "OCI Vault secret"
+            else ""
+        ),
+        "sourceNamespace": runtime_config.source_namespace,
+        "sourceBucket": runtime_config.source_bucket,
+        "minimumDate": runtime_config.minimum_date,
+        "workers": runtime_config.workers,
+        "exactObject": runtime_config.exact_object,
+        "tagSpecial1": runtime_config.tag_special1,
+        "tagSpecial2": runtime_config.tag_special2,
+        "tagSpecial3": runtime_config.tag_special3,
+        "tagSpecial4": runtime_config.tag_special4,
+        "destinationNamespace": runtime_config.destination_namespace,
+        "destinationBucket": runtime_config.destination_bucket,
+        "destinationPrefix": runtime_config.destination_prefix,
+        "preloadReport": runtime_config.preload_report,
+        "continueAfterReport": runtime_config.continue_after_report,
+        "skipPreloadContentScan": runtime_config.skip_preload_content_scan,
+        "uploadReports": runtime_config.upload_reports,
+        "loadAfterUpload": runtime_config.load_after_upload,
+        "force": runtime_config.force,
+        "skipTags": runtime_config.skip_tags,
+        "skipTagRows": runtime_config.skip_tag_rows,
+        "skipTagKeys": runtime_config.skip_tag_keys,
+        "keepWorkFiles": runtime_config.keep_work_files,
+        "verbose": runtime_config.verbose,
+    }
 
 
 def build_shell_script(config: LoaderCommandConfig) -> str:

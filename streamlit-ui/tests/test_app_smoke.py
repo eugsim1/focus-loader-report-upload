@@ -25,7 +25,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
         class BackendHandler(BaseHTTPRequestHandler):
             def do_GET(self):
                 if self.path == "/api/v1/health":
-                    payload = {"status": "ok", "version": "26.8.1-schema-drop-checkbox"}
+                    payload = {"status": "ok", "version": "26.9.0-loader-execution-ui"}
                 elif self.path == "/api/v1/tns/aliases":
                     payload = {
                         "aliases": ["FOCUS_HIGH", "FOCUS_LOW"],
@@ -55,9 +55,21 @@ class StreamlitAppSmokeTests(unittest.TestCase):
             with patch.dict(os.environ, {"FOCUS_API_URL": api_url}):
                 app = AppTest.from_file(str(app_path), default_timeout=10).run()
                 self.assertEqual(len(app.exception), 0)
-                self.assertGreaterEqual(len(app.tabs), 4)
+                self.assertGreaterEqual(len(app.tabs), 5)
                 self.assertEqual(app.tabs[0].label, "Database tables")
                 self.assertNotIn("Deploy schema", [tab.label for tab in app.tabs])
+                self.assertIn("Execute loader", [tab.label for tab in app.tabs])
+                requested_defaults = {
+                    "Pre-load report (-preload-report)": True,
+                    "Continue after report (-continue-after-report)": True,
+                    "Skip pre-load content scan (-skip-preload-content-scan)": True,
+                    "Skip tag rows (-skip-tag-rows)": True,
+                }
+                checkbox_values = {
+                    checkbox.label: checkbox.value for checkbox in app.checkbox
+                }
+                for label, expected in requested_defaults.items():
+                    self.assertEqual(checkbox_values.get(label), expected)
 
                 app.session_state["database_deployment_token"] = "opaque-test-token"
                 app.session_state["database_deployment_token_expires_at_utc"] = (
@@ -66,7 +78,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 app.session_state["database_admin_user"] = "ADMIN"
                 app.run()
                 self.assertEqual(len(app.exception), 0)
-                self.assertGreaterEqual(len(app.tabs), 5)
+                self.assertGreaterEqual(len(app.tabs), 6)
                 self.assertEqual(app.tabs[1].label, "Deploy schema")
                 self.assertIn(
                     "Drop the existing target schema and all its objects",

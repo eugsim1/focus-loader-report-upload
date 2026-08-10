@@ -109,6 +109,10 @@ one-use token that can authorize `POST /api/v1/schema/deploy`. That endpoint can
 run only the server-configured
 `sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh`; it does not accept a
 browser-supplied command, script path, TNS path, alias, config path, or SQL text.
+The versioned `POST /api/v1/loader/jobs` endpoint accepts only validated
+structured loader fields, starts the fixed `FOCUS_LOADER_EXECUTABLE`, and exposes
+status at `GET /api/v1/loader/jobs/<jobId>`. Its row monitor runs only a fixed
+`COUNT(*)` query against `TEMP_OCI_FOCUS` as the configured database user.
 
 Example response:
 
@@ -252,9 +256,9 @@ grep -nE '^[[:space:]]*[A-Za-z0-9_.-]+[[:space:]]*=' \
 
 - Keep the listener on loopback unless a protected reverse proxy is used.
 - Do not place wallet contents, credentials, or descriptors in browser logs.
-- Alias/page handlers accept only `GET`/`HEAD`; database-table and deployment
-  handlers accept only size-limited JSON `POST` requests. All responses use
-  no-cache and browser-hardening headers and server-side request timeouts.
+- Alias/page/status handlers accept only read methods; database-table,
+  deployment, and loader-start handlers accept only size-limited JSON `POST`
+  requests. All responses use no-cache/browser-hardening headers and timeouts.
 - A verified administrator password is held only in Go process memory for at
   most 15 minutes behind a random one-use token. Streamlit stores only the token.
 - The target-schema password is held only for the deployment request and the
@@ -262,6 +266,9 @@ grep -nE '^[[:space:]]*[A-Za-z0-9_.-]+[[:space:]]*=' \
   never logged, and never included in a response.
 - `dropExisting` defaults to false. The Streamlit form uses one explicit
   checkbox to request deletion before recreating the target schema.
+- Loader execution is limited to one server-configured child binary/job at a
+  time with validated catalog aliases, a 24-hour timeout, bounded redacted
+  output, password-over-stdin handling, and a dedicated writable work directory.
 - The source path is fixed from the server-side environment; the browser cannot
   request an arbitrary file.
 - The implementation is independent software and is not affiliated with,

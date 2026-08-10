@@ -46,10 +46,17 @@ func run(ctx context.Context) error {
 	if cmd.tnsGUI {
 		return runTNSGUI(ctx, cmd.tnsGUIListen)
 	}
+	if cmd.dbPasswordStdin {
+		password, err := readLoaderPassword(os.Stdin)
+		if err != nil {
+			return err
+		}
+		cmd.dbPassword = password
+	}
 
 	if cmd.dbUser == "" || cmd.dbName == "" || (cmd.dbPassword == "" && cmd.dbSecretID == "") {
 		printUsage()
-		printHeader("You must specify database credentials using either -dp or -ds!!", 0)
+		printHeader("You must specify database credentials using -dp, -dp-stdin, or -ds!!", 0)
 		return nil
 	}
 	if cmd.workers < 1 {

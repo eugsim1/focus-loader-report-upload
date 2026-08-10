@@ -1,5 +1,5 @@
 [Unit]
-Description=FOCUS Loader TNS, database metadata, and schema deployment API
+Description=FOCUS Loader TNS, database metadata, schema deployment, and execution API
 After=network.target
 
 [Service]
@@ -22,7 +22,7 @@ RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 UMask=0077
-ReadWritePaths=/opt/focus-loader/focus.conf /opt/focus-loader/sql_scripts/focus.conf
+ReadWritePaths=/opt/focus-loader/focus.conf /opt/focus-loader/sql_scripts/focus.conf /opt/focus-loader/work_report_dir
 
 [Install]
 WantedBy=multi-user.target

@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -59,6 +59,32 @@ class SchemaDeployment:
     output: str
     error: str
     tables: tuple[DatabaseTable, ...]
+
+
+@dataclass(frozen=True)
+class LoaderJob:
+    job_id: str
+    status: str
+    database_user: str
+    database_alias: str
+    table_name: str
+    started_at_utc: str
+    finished_at_utc: str
+    exit_code: int | None
+    initial_row_count: int
+    initial_row_count_known: bool
+    current_row_count: int
+    current_row_count_known: bool
+    rows_inserted: int
+    rows_inserted_known: bool
+    row_count_updated_at_utc: str
+    row_count_error: str
+    output: str
+    error: str
+
+    @property
+    def terminal(self) -> bool:
+        return self.status in {"succeeded", "failed", "timed_out"}
 
 
 class FocusAPIClient:
@@ -204,6 +230,58 @@ class FocusAPIClient:
             tables=tuple(tables),
         )
 
+    def start_loader_job(self, body: Mapping[str, Any]) -> LoaderJob:
+        payload = self._request_json(
+            "/api/v1/loader/jobs",
+            method="POST",
+            body=body,
+            timeout_seconds=max(self.timeout_seconds, 60.0),
+        )
+        return self._loader_job(payload)
+
+    def loader_job(self, job_id: str) -> LoaderJob:
+        if not job_id or len(job_id) > 512 or any(
+            character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+            for character in job_id
+        ):
+            raise FocusAPIError("The loader job id is invalid.")
+        payload = self._get_json("/api/v1/loader/jobs/" + quote(job_id, safe=""))
+        return self._loader_job(payload)
+
+    def _loader_job(self, payload: Mapping[str, Any]) -> LoaderJob:
+        status = self._required_string(payload, "status")
+        if status not in {"starting", "running", "succeeded", "failed", "timed_out"}:
+            raise FocusAPIError("The Go API returned an invalid loader job status.")
+        exit_code = payload.get("exitCode")
+        if exit_code is not None and (
+            not isinstance(exit_code, int) or isinstance(exit_code, bool)
+        ):
+            raise FocusAPIError("The Go API returned an invalid loader exit code.")
+        return LoaderJob(
+            job_id=self._required_string(payload, "jobId"),
+            status=status,
+            database_user=self._required_string(payload, "databaseUser"),
+            database_alias=self._required_string(payload, "databaseAlias"),
+            table_name=self._required_string(payload, "tableName"),
+            started_at_utc=self._string(payload, "startedAtUtc"),
+            finished_at_utc=self._string(payload, "finishedAtUtc"),
+            exit_code=exit_code,
+            initial_row_count=self._required_int(payload, "initialRowCount"),
+            initial_row_count_known=self._required_bool(
+                payload, "initialRowCountKnown"
+            ),
+            current_row_count=self._required_int(payload, "currentRowCount"),
+            current_row_count_known=self._required_bool(
+                payload, "currentRowCountKnown"
+            ),
+            rows_inserted=self._required_int(payload, "rowsInserted"),
+            rows_inserted_known=self._required_bool(payload, "rowsInsertedKnown"),
+            row_count_updated_at_utc=self._string(payload, "rowCountUpdatedAtUtc"),
+            row_count_error=self._string(payload, "rowCountError"),
+            output=self._string(payload, "output"),
+            error=self._string(payload, "error"),
+        )
+
     def _get_json(self, path: str) -> Mapping[str, Any]:
         return self._request_json(path, method="GET")
 
@@ -265,6 +343,13 @@ class FocusAPIClient:
     def _required_string(payload: Mapping[str, Any], name: str) -> str:
         value = payload.get(name)
         if not isinstance(value, str) or not value:
+            raise FocusAPIError(f"The Go API response is missing {name}.")
+        return value
+
+    @staticmethod
+    def _string(payload: Mapping[str, Any], name: str) -> str:
+        value = payload.get(name)
+        if not isinstance(value, str):
             raise FocusAPIError(f"The Go API response is missing {name}.")
         return value
 

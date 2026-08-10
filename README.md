@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.8.1-schema-drop-checkbox`
+Version `26.9.0-loader-execution-ui`
 
 > **Independent project disclaimer**
 >
@@ -112,12 +112,19 @@ Current interactions include:
 - diagnostic API output without connect descriptors or wallet content;
 - a validated command builder with direct-password or OCI Vault database
   authentication, editable values, and explicit CLI flag checkboxes;
-- POSIX-safe command preview and reviewed shell-script download.
+- POSIX-safe command preview and reviewed shell-script download;
+- a separate Execute loader tab that runs the validated settings through the
+  fixed backend executable and refreshes `TEMP_OCI_FOCUS` row totals every five
+  seconds, including the increase from the pre-run baseline.
 
-The command-builder tab deliberately does not execute generated commands. Its
-default direct-password form is masked and cleared; the preview and downloaded
-file never contain that password, and the downloaded script prompts again in
-the terminal before passing `-dp`. OCI Vault `-ds`/`-dst` is the alternative.
+The command-builder tab does not execute by itself. Its default direct-password
+form is masked and cleared; the preview and downloaded file never contain that
+password, and the downloaded script prompts again in the terminal before
+passing `-dp`. The Execute loader tab accepts the password again and sends it
+only to the loopback Go API, which passes it to the fixed child loader through
+standard input rather than process arguments. OCI Vault `-ds`/`-dst` is the
+alternative. Only one UI-started loader job can run at a time, and browser users
+cannot supply an executable path or shell command.
 A successful first-tab login creates a
 random, 15-minute, one-use token; Streamlit stores that opaque token instead of
 the administrator password. The second tab can execute only the installed fixed
@@ -125,7 +132,7 @@ deployment script, with server-controlled TNS and configuration paths. Both
 services bind to loopback by default and are reached through SSH/OCI Bastion or
 an authenticated TLS reverse proxy.
 
-Quick deployment after installing the `26.8.1-schema-drop-checkbox` Go binary:
+Quick deployment after installing the `26.9.0-loader-execution-ui` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip
@@ -567,7 +574,7 @@ All relative paths are resolved from the process working directory. The supplied
 | `-workers` | Integer, default `1` | Number of files processed concurrently. Must be at least 1 and is capped internally to the number of pending objects. More workers increase OCI requests, local disk usage, memory, Oracle sessions, and SQL*Loader pressure. Start with 1–4 and measure. |
 | `-verbose` | Boolean, default `false` | Prints detailed per-file pre-load inspection and transformed-upload progress. Without it, upload progress is printed periodically and at completion. Useful for diagnosis but can create large cron logs. |
 | `-keep-work-files` | Boolean, default `false` | Retains downloaded gzip files and generated CSV/control artifacts after successful processing. Normally successful work files are removed. Failure artifacts may remain even without this flag so they can be investigated. Plan disk capacity before enabling it. |
-| `-tns-gui` | Boolean, default `false` | Starts the loopback TNS, database-metadata, and fixed-script schema-deployment API and exits before normal loader database/OCI validation. A successful table lookup creates a short-lived, one-use deployment authorization; the deployment endpoint remains unavailable without it. |
+| `-tns-gui` | Boolean, default `false` | Starts the loopback TNS, database-metadata, fixed-script schema-deployment, and structured loader-job API and exits before normal loader database/OCI validation. A successful table lookup creates a short-lived, one-use deployment authorization; loader jobs use separately submitted validated settings. |
 | `-tns-gui-listen` | String, default `127.0.0.1:8080` | Listener used with `-tns-gui`. Keep the loopback default and reach it through SSH; a non-loopback listener has no built-in authentication. |
 
 ### OCI authentication, source location, and networking
@@ -590,11 +597,13 @@ The source client lists objects under the fixed prefix `FOCUS Reports/`. The sou
 | `-du` | String, required | Oracle/Autonomous Database user. Required in all current modes, including upload-only and reports, because startup connects to the database and reads load history. |
 | `-dn` | String, required | Oracle connect string or TNS alias, such as `focusdb_high`. `TNS_ADMIN` must expose the referenced wallet/network configuration. |
 | `-dp` | String, default empty | Plain database password. Either `-dp` or `-ds` is required. This value is masked in application logging but may be visible in the host process list or shell history; avoid it in cron. |
+| `-dp-stdin` | Boolean, default `false` | Reads the direct database password from standard input. It cannot be combined with `-dp` or `-ds`. The Streamlit execution API uses this mode internally so the child process arguments do not contain the password. |
 | `-ds` | OCI secret OCID, default empty | Retrieves the database password from an OCI Vault secret bundle. The secret content must decode to the password expected by Oracle. Recommended for scheduled execution. |
 | `-dst` | String, default empty | OCI profile used specifically to read `-ds`. If empty or `local`, secret retrieval uses instance principals. For API-key authentication, supply a config profile such as `-dst DEFAULT`. |
 | `-ctl` | Path, default `focus.ctl` | SQL*Loader control-file template. The program replaces table/data-file tokens and writes a per-file generated control file. Used only when SQL*Loader runs. Keep it aligned with the transformed CSV column order and target table. |
 
-Startup currently requires `-du`, `-dn`, and either `-dp` or `-ds`, even when `-upload-reports` is used without SQL*Loader.
+Startup currently requires `-du`, `-dn`, and one of `-dp`, `-dp-stdin`, or
+`-ds`, even when `-upload-reports` is used without SQL*Loader.
 
 ### Tag enrichment and performance
 

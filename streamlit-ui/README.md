@@ -32,19 +32,27 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
   OCI profile, user, alias, namespace, date, workers, and `-ts1` through `-ts4`.
 - Explicit checkboxes for pre-load, continuation, metadata-only scanning,
   upload/load, force, tag skips, work-file retention, and verbose CLI flags.
+- The pre-load report, metadata-only scan, tag-row skip, and continue-after-report
+  flags are selected by default.
 - Instance-principal and OCI config/profile authentication choices, plus
   validation for required values, flag interactions, dates, workers, upload
   destinations, and control characters.
 - POSIX-safe command quoting and shell-script download.
+- A separate **Execute loader** tab that starts one validated job through the
+  fixed backend executable and refreshes `TEMP_OCI_FOCUS` total/delta metrics
+  every five seconds.
 - Diagnostics page with local API commands and non-secret backend metadata.
 - Python unit tests, Go API/parser tests, a systemd service, an automated
   installer, and a deployed-service smoke-test script.
 
-The command builder does **not** execute the generated command. For direct
-password authentication, it validates a masked field but places only a redacted
-marker in the preview; the downloaded script prompts again with terminal echo
-disabled and never contains the submitted value. Vault mode emits `-ds` and
-optional `-dst`. After a successful first-tab connection, the Go backend retains
+The command builder does not execute by itself. For direct-password
+authentication, it validates a masked field but places only a redacted marker
+in the preview; the downloaded script prompts again with terminal echo disabled
+and never contains the submitted value. The separate execution tab requests the
+password again and submits structured fields to the loopback Go API. The API
+passes the password to the fixed child loader through standard input, not its
+arguments. Vault mode emits `-ds` and optional `-dst`. After a successful
+first-tab connection, the Go backend retains
 the administrator credentials only in memory behind a random, 15-minute,
 one-use deployment token. Streamlit stores only that opaque token, never the
 password. All password forms are masked and cleared; passwords are never logged,
@@ -60,8 +68,9 @@ flowchart LR
     API["Go TNS, metadata, and deployment API<br/>127.0.0.1:8080"]
     TNS["$TNS_ADMIN/tnsnames.ora"]
     Builder["Validated command preview"]
-    Loader["Existing Go loader<br/>manual execution"]
-    DB["Oracle Database<br/>ALL_TABLES"]
+    Execute["Fixed-binary job API<br/>one job at a time"]
+    Loader["Child Go loader"]
+    DB["Oracle Database<br/>metadata and row count"]
     Script["Fixed sql_scripts deployment file"]
     OCI["OCI and Autonomous Database"]
 
@@ -69,7 +78,8 @@ flowchart LR
     UI --> API --> TNS
     API -->|"credential-once lookup"| DB
     API -->|"one-use authorization"| Script --> DB
-    UI --> Builder --> Loader --> OCI
+    UI --> Builder --> Execute --> Loader --> OCI
+    Execute -->|"COUNT TEMP_OCI_FOCUS every 5s"| DB
 ```
 
 The Streamlit process never reads the wallet or `tnsnames.ora`. The Go process
@@ -81,8 +91,11 @@ the connection. A successful lookup also creates one short-lived deployment
 authorization. The deployment API loads only the server-configured script,
 passes both passwords through an anonymous inherited file descriptor instead of
 command arguments or environment values, redacts both passwords from output,
-and uses the new schema's password for the final fixed table query. The API URL comes from server-side `FOCUS_API_URL` and
-cannot be changed by a browser user.
+and uses the new schema's password for the final fixed table query. The loader
+job API separately revalidates builder fields, starts only the configured
+binary, and uses fixed current-schema row-count SQL while the job runs. The API
+URL comes from server-side `FOCUS_API_URL` and cannot be changed by a browser
+user.
 
 ## Directory contents
 
@@ -123,7 +136,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.8.1-schema-drop-checkbox"
+  "version": "26.9.0-loader-execution-ui"
 }
 ```
 
@@ -228,6 +241,45 @@ combined output, deployment/table-lookup status, and the tables found by logging
 in as the created schema with the submitted target password. A script failure is
 returned as a structured result so its console output remains visible.
 
+### Loader execution jobs
+
+```http
+POST /api/v1/loader/jobs
+Content-Type: application/json
+```
+
+The request is a structured copy of the validated builder fields. It includes
+the database user/alias, one runtime credential, OCI authentication settings,
+source and destination values, workers, tag fields, and individual booleans for
+each supported flag. It does not include an executable or shell command. The
+backend requires the alias to exist in its TNS catalog and launches only
+`FOCUS_LOADER_EXECUTABLE` from `FOCUS_LOADER_WORK_DIR`.
+
+The four normal pre-load booleans are:
+
+```json
+{
+  "preloadReport": true,
+  "skipPreloadContentScan": true,
+  "skipTagRows": true,
+  "continueAfterReport": true
+}
+```
+
+A successful start returns HTTP `202` with an opaque `jobId`. Poll it with:
+
+```http
+GET /api/v1/loader/jobs/<jobId>
+```
+
+The response reports `starting`, `running`, `succeeded`, `failed`, or
+`timed_out`; start/finish times; exit code; bounded redacted output; and
+`initialRowCount`, `currentRowCount`, and `rowsInserted` values with availability
+flags. `rowsInserted` is the current `TEMP_OCI_FOCUS` count minus the count read
+immediately before the child loader starts. Oracle commits become visible on
+subsequent five-second polls. Only one loader job can run at a time, jobs time
+out after 24 hours, and completed status is retained in memory for two hours.
+
 ## Oracle Linux 8 prerequisites
 
 The instructions assume:
@@ -258,8 +310,8 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 
 ## 1. Build and install the updated Go backend
 
-The gated schema deployment tab needs the API endpoint introduced in
-`26.7.0-schema-deployment-ui`.
+The execution tab and live row counter require the `26.9.0-loader-execution-ui`
+Go API and UI to be installed together.
 
 ```bash
 cd /opt/focus-loader/src
@@ -279,7 +331,7 @@ sudo install -o focusloader -g focusloader -m 0750 \
 Expected version:
 
 ```text
-focus-loader-report-upload 26.8.1-schema-drop-checkbox
+focus-loader-report-upload 26.9.0-loader-execution-ui
 ```
 
 ## 2. Verify TNS permissions
@@ -344,9 +396,9 @@ world-readable.
 ## 3A. Automated installation
 
 Review the installer before running it. It copies the UI and fixed deployment
-script, creates an isolated virtual environment, installs Streamlit, installs
-both systemd units, verifies SQL*Plus and configuration write access, and waits
-for the local health endpoints.
+script, creates an isolated virtual environment and writable
+`/opt/focus-loader/work_report_dir`, installs Streamlit and both systemd units,
+verifies SQL*Plus/configuration access, and waits for the local health endpoints.
 
 ```bash
 cd /opt/focus-loader/src
@@ -384,6 +436,8 @@ sudo install -d -o focusloader -g focusloader -m 0750 \
   /opt/focus-loader/streamlit-ui/.streamlit
 sudo install -d -o root -g focusloader -m 0750 \
   /opt/focus-loader/sql_scripts
+sudo install -d -o focusloader -g focusloader -m 0750 \
+  /opt/focus-loader/work_report_dir
 
 sudo install -o focusloader -g focusloader -m 0640 \
   streamlit-ui/app.py \
@@ -400,6 +454,7 @@ sudo install -o root -g focusloader -m 0750 \
 sudo install -o focusloader -g focusloader -m 0640 \
   sql_scripts/focus.conf /opt/focus-loader/sql_scripts/focus.conf
 sudo -u focusloader test -w /opt/focus-loader/focus.conf
+sudo -u focusloader test -w /opt/focus-loader/work_report_dir
 ```
 
 Create the virtual environment and install only the declared runtime packages:
@@ -543,10 +598,11 @@ additional deployment. Closing/restarting the Go service also invalidates it.
 5. Review or edit all four special-tag text fields.
 6. Set upload destination values when enabling the upload checkbox.
 7. Select each required CLI flag in **Flags**. The defaults reproduce the
-   requested pre-load/continue/metadata-only/tag-row-skip command.
+   requested command: `-preload-report`, `-skip-preload-content-scan`,
+   `-skip-tag-rows`, and `-continue-after-report` are selected.
 8. Select **Validate and build command** and review the safely quoted preview.
-9. Download the shell script if required, review it, and execute it under the approved
-   service account and change window.
+9. Download the shell script for manual operation, or continue to **Execute
+   loader** to run the same validated non-secret settings through the backend.
 
 The generated file includes `set -euo pipefail`. In direct-password mode the
 preview shows `[DATABASE_PASSWORD_PROMPT]` and the downloaded script uses a
@@ -554,7 +610,28 @@ hidden terminal prompt before supplying `-dp`; the submitted field value is not
 stored in either artifact. Once executed, the loader's `-dp` argument may still
 be visible to same-host process inspection. Use the direct-password script only
 interactively on a controlled host; prefer OCI Vault for scheduled/shared runs.
-The script is not run by Streamlit.
+The downloaded script is never run automatically.
+
+### Execute loader tab
+
+1. Validate the command in **Command builder** first.
+2. Review the redacted command, selected database user/alias, authentication
+   mode, and worker count.
+3. For direct authentication, enter the database password again. For Vault
+   authentication, confirm the displayed mode; the backend resolves the secret.
+4. Select **Execute the validated loader job**, then select **Start loader
+   execution**.
+5. Keep the page open. The status fragment refreshes every five seconds and
+   shows job state, `TEMP_OCI_FOCUS` total rows, and rows inserted since the
+   baseline captured immediately before execution.
+6. When the job ends, review the exit code and bounded, redacted console output.
+
+The Go service runs only `FOCUS_LOADER_EXECUTABLE` with structured arguments and
+`FOCUS_LOADER_WORK_DIR`; it ignores the executable text used by the preview.
+Direct passwords travel over the loopback POST request and child stdin, never a
+process argument. Only one job can be active. The count reflects committed rows,
+so it can advance in batches after SQL*Loader commits rather than on every CSV
+record.
 
 ### Diagnostics tab
 
@@ -606,7 +683,7 @@ sudo grep '^FOCUS_API_URL=' /etc/focus-loader/streamlit.env
 ```
 
 An older binary does not have `/api/v1/schema/deploy`; install the
-`26.8.1-schema-drop-checkbox` binary before using the current interface.
+`26.9.0-loader-execution-ui` binary before using the current interface.
 
 ### The alias endpoint returns an error
 
@@ -726,14 +803,22 @@ directory to roll back application code.
   command, script path, TNS path, alias, or config path.
 - The installer makes the script and its directory root-owned. The hardened Go
   service receives write access only to the installed working and parent
-  `focus.conf` files.
+  `focus.conf` files plus `work_report_dir` for loader checkpoints/reports.
 - `dropExisting` defaults to false. The single destructive-replacement checkbox
   must be selected to drop and recreate a schema. Use database auditing/change
   controls for production runs.
 - The command builder remains separate from execution. Its password preview is
   redacted, its downloaded script prompts securely at runtime, and neither
   artifact stores the submitted password.
-- The UI generates but never executes loader commands.
+- The execution API accepts only structured, revalidated fields, requires a TNS
+  alias from the server catalog, and starts only the server-configured binary in
+  its configured work directory. It rejects concurrent jobs and enforces a
+  24-hour timeout.
+- Direct execution passwords are passed to the child through stdin instead of
+  arguments. The backend keeps the effective direct/Vault password only while
+  the job needs live row-count monitoring and never returns it to Streamlit.
+- The row monitor executes only fixed `SELECT COUNT(*) FROM TEMP_OCI_FOCUS` SQL
+  as the configured database user; the browser cannot supply SQL or a table.
 - Shell arguments are represented as an argument list and POSIX-quoted.
 - The services run as the unprivileged `focusloader` account with systemd
   hardening directives.

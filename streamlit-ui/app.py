@@ -14,7 +14,9 @@ from command_builder import (
     CommandValidationError,
     LoaderCommandConfig,
     build_loader_command,
+    build_loader_execution_payload,
     build_shell_script,
+    execution_config_without_password,
 )
 from focus_api import (
     AliasCatalog,
@@ -23,6 +25,7 @@ from focus_api import (
     FocusAPIClient,
     FocusAPIError,
     Health,
+    LoaderJob,
     SchemaDeployment,
 )
 
@@ -372,7 +375,8 @@ def render_schema_deployment(api_url: str, catalog: AliasCatalog) -> None:
 def render_command_builder(selected_alias: str) -> None:
     st.subheader("Loader command builder")
     st.warning(
-        "This page validates and previews a command; it does not execute it. "
+        "This page validates and previews a command. Use the separate Execute "
+        "loader tab to run the validated settings through the fixed backend binary. "
         "The downloaded direct-password script prompts securely at runtime so "
         "the entered password is never displayed or saved. During execution, "
         "-dp may still be visible to same-host process inspection; prefer Vault "
@@ -523,10 +527,14 @@ def render_command_builder(selected_alias: str) -> None:
         try:
             st.session_state["loader_command"] = build_loader_command(config)
             st.session_state["loader_script"] = build_shell_script(config)
+            st.session_state["loader_execution_config"] = (
+                execution_config_without_password(config)
+            )
             st.success("Command validation passed.")
         except CommandValidationError as error:
             st.session_state.pop("loader_command", None)
             st.session_state.pop("loader_script", None)
+            st.session_state.pop("loader_execution_config", None)
             st.error(str(error))
 
     if command := st.session_state.get("loader_command"):
@@ -541,6 +549,127 @@ def render_command_builder(selected_alias: str) -> None:
             file_name="run-focus-loader.sh",
             mime="text/x-shellscript",
         )
+
+
+def render_loader_job(job: LoaderJob) -> None:
+    status_column, inserted_column, total_column = st.columns(3)
+    status_column.metric("Job status", job.status.replace("_", " ").title())
+    inserted_column.metric(
+        "Rows inserted this run",
+        f"{job.rows_inserted:,}" if job.rows_inserted_known else "Waiting...",
+    )
+    total_column.metric(
+        f"{job.table_name} total rows",
+        f"{job.current_row_count:,}" if job.current_row_count_known else "Waiting...",
+    )
+
+    if job.row_count_updated_at_utc:
+        st.caption(
+            f"Row count last updated at {job.row_count_updated_at_utc}; "
+            f"baseline={job.initial_row_count if job.initial_row_count_known else 'unavailable'}."
+        )
+    if job.row_count_error:
+        st.warning(
+            "The loader job is still monitored, but the latest table row-count query "
+            f"failed: {job.row_count_error}"
+        )
+    if job.status in {"starting", "running"}:
+        st.info(
+            "Execution is active. This panel refreshes every five seconds. "
+            "Committed rows become visible after each SQL*Loader transaction."
+        )
+    elif job.status == "succeeded":
+        st.success(f"Loader execution completed with exit code {job.exit_code}.")
+    else:
+        st.error(job.error or f"Loader execution ended with status {job.status}.")
+    if job.output:
+        st.code(job.output, language="text", wrap_lines=True)
+
+
+def render_loader_execution(api_url: str) -> None:
+    st.subheader("Execute loader")
+    st.caption(
+        "Runs only the backend-configured FOCUS Loader executable. The browser "
+        "submits validated fields, never a shell command or executable path."
+    )
+
+    active_job_id = st.session_state.get("loader_job_id")
+    if isinstance(active_job_id, str) and active_job_id:
+
+        @st.fragment(run_every="5s")
+        def poll_loader_job() -> None:
+            try:
+                job = FocusAPIClient(api_url, timeout_seconds=15.0).loader_job(
+                    active_job_id
+                )
+            except FocusAPIError as error:
+                st.error(str(error))
+                return
+            st.session_state["loader_job_last"] = job
+            render_loader_job(job)
+            if job.terminal:
+                st.session_state.pop("loader_job_id", None)
+                st.rerun()
+
+        poll_loader_job()
+        return
+
+    last_job = st.session_state.get("loader_job_last")
+    if isinstance(last_job, LoaderJob):
+        render_loader_job(last_job)
+        if st.button("Clear completed execution result"):
+            st.session_state.pop("loader_job_last", None)
+            st.rerun()
+        st.divider()
+
+    config = st.session_state.get("loader_execution_config")
+    if not isinstance(config, LoaderCommandConfig):
+        st.info(
+            "Validate a command in the Command builder tab first. Its non-secret "
+            "settings will then become available here."
+        )
+        return
+
+    st.code(st.session_state.get("loader_command", ""), language="bash", wrap_lines=True)
+    st.caption(
+        f"Target: {config.database_user}@{config.database_alias}; "
+        f"workers={config.workers}; authentication={config.database_auth_mode}."
+    )
+    with st.form("loader-execution", clear_on_submit=True):
+        runtime_password = ""
+        if config.database_auth_mode == "Database password":
+            runtime_password = st.text_input(
+                "Database password for execution",
+                type="password",
+                help=(
+                    "Submitted once to the loopback Go API, passed to the loader over "
+                    "stdin, and retained only in backend memory while row monitoring runs."
+                ),
+            )
+        else:
+            st.info(
+                "The backend will resolve the configured OCI Vault secret before "
+                "starting, then use it only for live row-count monitoring."
+            )
+        confirmed = st.checkbox(
+            "Execute the validated loader job",
+            help="The job can download OCI reports and insert committed rows into Oracle.",
+        )
+        submitted = st.form_submit_button("Start loader execution", type="primary")
+
+    if submitted:
+        if not confirmed:
+            st.error("Select the execution confirmation checkbox first.")
+            return
+        try:
+            payload = build_loader_execution_payload(config, runtime_password)
+            job = FocusAPIClient(api_url, timeout_seconds=60.0).start_loader_job(payload)
+        except (CommandValidationError, FocusAPIError) as error:
+            st.error(str(error))
+            return
+        st.session_state["loader_job_id"] = job.job_id
+        st.session_state["loader_job_last"] = job
+        st.rerun()
 
 
 def render_diagnostics(api_url: str, health: Health, catalog: AliasCatalog) -> None:
@@ -599,7 +728,7 @@ def main() -> None:
     tab_labels = ["Database tables"]
     if show_deployment_tab:
         tab_labels.append("Deploy schema")
-    tab_labels.extend(["Connection", "Command builder", "Diagnostics"])
+    tab_labels.extend(["Connection", "Command builder", "Execute loader", "Diagnostics"])
     tabs = st.tabs(tab_labels)
 
     tab_index = 0
@@ -615,6 +744,9 @@ def main() -> None:
     tab_index += 1
     with tabs[tab_index]:
         render_command_builder(selected_alias)
+    tab_index += 1
+    with tabs[tab_index]:
+        render_loader_execution(api_url)
     tab_index += 1
     with tabs[tab_index]:
         render_diagnostics(api_url, health, catalog)

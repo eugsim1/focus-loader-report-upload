@@ -1,5 +1,25 @@
 # Changelog
 
+## 26.9.0-loader-execution-ui
+
+- Added an **Execute loader** Streamlit tab that starts the last validated
+  command through an asynchronous, server-controlled Go job API; browser users
+  cannot choose the executable or submit shell text.
+- Keep `-preload-report`, `-skip-preload-content-scan`, `-skip-tag-rows`, and
+  `-continue-after-report` selected by default in both the form and command
+  configuration model, with regression tests for all four defaults.
+- Added five-second monitoring of `TEMP_OCI_FOCUS`, showing its current row
+  count and the increase from the pre-execution baseline while the loader runs.
+- Pass direct database passwords to the child loader through standard input
+  instead of process arguments; Vault secrets are resolved in backend memory
+  for monitoring and are never returned to the browser.
+- Limit execution to one job at a time, a 24-hour runtime, validated TNS aliases
+  and structured flags, bounded/redacted final output, and a fixed server-side
+  executable/working directory.
+- Updated the Oracle Linux installer and hardened systemd unit with a dedicated
+  writable `work_report_dir`, execution configuration, tests, API reference,
+  operations guidance, and security documentation.
+
 ## 26.8.1-schema-drop-checkbox
 
 - Removed the typed `DROP <SCHEMA>` confirmation field from the Streamlit
