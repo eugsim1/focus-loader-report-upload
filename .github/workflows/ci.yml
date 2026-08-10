@@ -48,6 +48,35 @@ jobs:
         working-directory: streamlit-ui
         run: python -m compileall -q app.py focus_api.py command_builder.py tests
 
+      - name: Validate PowerShell Bastion launcher
+        shell: pwsh
+        run: |
+          $scriptPath = 'linux8-streamlit-bastion/connect-streamlit-bastion.ps1'
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $scriptPath),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | Format-List
+            throw 'PowerShell parser validation failed.'
+          }
+
+          $privateKey = Join-Path $env:RUNNER_TEMP 'test_bastion_key'
+          $publicKey = "${privateKey}.pub"
+          Set-Content -LiteralPath $privateKey -Value 'TEST-ONLY-PRIVATE-KEY'
+          Set-Content -LiteralPath $publicKey -Value 'ssh-ed25519 AAAATESTONLY'
+          & $scriptPath `
+            -BastionId 'ocid1.bastion.oc1.eu-frankfurt-1.testbastion' `
+            -InstanceId 'ocid1.instance.oc1.eu-frankfurt-1.testinstance' `
+            -PrivateIp '10.30.1.10' `
+            -Region 'eu-frankfurt-1' `
+            -SshPrivateKeyPath $privateKey `
+            -LocalPort 18501 `
+            -DryRun
+
       - name: Build
         env:
           CGO_ENABLED: "1"

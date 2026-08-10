@@ -1,5 +1,14 @@
 # Changelog
 
+## 26.5.6-powershell-bastion-tunnel
+
+- Added a Windows PowerShell launcher that creates a managed-SSH session on an
+  existing OCI Bastion and opens a loopback-only Streamlit tunnel.
+- Added Bastion/session state checks, numbered activation polling, local-port
+  validation, dry-run support, and automatic cleanup of the created session.
+- Documented OCI CLI, OpenSSH, OCID, key, execution-policy, alternate-port, and
+  troubleshooting requirements for laptop access.
+
 ## 26.5.5-linux8-bastion
 
 - Added a focused Oracle Linux 8 deployment guide for the existing Streamlit interface.

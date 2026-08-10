@@ -122,14 +122,23 @@ sudo TNS_ADMIN=/opt/oracle/wallet PYTHON_BIN=python3.11 \
 ./scripts/test-streamlit-ui.sh
 ```
 
-From a workstation:
+From a Windows workstation, use the included OCI Bastion launcher with the
+existing Bastion and Compute OCIDs:
 
-```bash
-ssh -N -L 8501:127.0.0.1:8501 opc@SERVER_IP
+```powershell
+.\linux8-streamlit-bastion\connect-streamlit-bastion.ps1 `
+  -BastionId 'ocid1.bastion.oc1.eu-frankfurt-1.REPLACE' `
+  -InstanceId 'ocid1.instance.oc1.eu-frankfurt-1.REPLACE' `
+  -PrivateIp '10.30.1.10' `
+  -Region 'eu-frankfurt-1' `
+  -SshPrivateKeyPath "$HOME\.ssh\bastion_ed25519"
 ```
 
-Then open `http://127.0.0.1:8501/`. Complete installation, manual deployment,
-systemd, API, upgrade, rollback, and troubleshooting steps are in
+Keep PowerShell open and browse to `http://127.0.0.1:8501/`. The launcher
+creates a temporary managed-SSH session on the existing Bastion and deletes it
+when the tunnel closes. Complete installation, laptop prerequisites, manual
+deployment, systemd, API, upgrade, rollback, and troubleshooting steps are in
+[`linux8-streamlit-bastion/README.md`](linux8-streamlit-bastion/README.md) and
 [`streamlit-ui/README.md`](streamlit-ui/README.md).
 
 ## Contents

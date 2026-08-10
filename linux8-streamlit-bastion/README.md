@@ -89,7 +89,58 @@ sudo ss -ltnp | grep -E ':(8080|8501)\\b'
 
 Both listeners must show `127.0.0.1`, not the server's private IP.
 
-## 3. Create an OCI Bastion managed SSH session
+## 3. Create the session and tunnel from a Windows laptop
+
+The included PowerShell launcher uses the OCI CLI to reuse the existing
+Bastion service, create a fresh managed-SSH session, wait for `ACTIVE`, and
+open the loopback-only Streamlit tunnel automatically:
+
+```powershell
+cd C:\path\to\focus-loader-report-upload\linux8-streamlit-bastion
+
+.\connect-streamlit-bastion.ps1 `
+  -BastionId 'ocid1.bastion.oc1.eu-frankfurt-1.REPLACE' `
+  -InstanceId 'ocid1.instance.oc1.eu-frankfurt-1.REPLACE' `
+  -PrivateIp '10.30.1.10' `
+  -Region 'eu-frankfurt-1' `
+  -SshPrivateKeyPath "$HOME\.ssh\bastion_ed25519" `
+  -Profile 'DEFAULT'
+```
+
+The adjacent public key is selected automatically by appending `.pub` to the
+private-key path. Use `-SshPublicKeyPath` when it has a different name. The
+laptop must have OCI CLI credentials authorized to inspect the Bastion and
+manage Bastion sessions, plus the Windows OpenSSH Client:
+
+```powershell
+oci iam region-subscription list --profile DEFAULT --all
+ssh -V
+```
+
+Validate all local arguments without contacting OCI or starting SSH:
+
+```powershell
+.\connect-streamlit-bastion.ps1 `
+  -BastionId 'ocid1.bastion.oc1.eu-frankfurt-1.REPLACE' `
+  -InstanceId 'ocid1.instance.oc1.eu-frankfurt-1.REPLACE' `
+  -PrivateIp '10.30.1.10' `
+  -Region 'eu-frankfurt-1' `
+  -SshPrivateKeyPath "$HOME\.ssh\bastion_ed25519" `
+  -DryRun
+```
+
+Keep the PowerShell window open and browse to `http://127.0.0.1:8501/`.
+Press Ctrl+C to close the tunnel. The script deletes the session it created
+when SSH exits; `-KeepSession` leaves it active until its TTL expires. Use
+`-LocalPort 18501` if local port 8501 is already occupied.
+
+If Windows blocks local scripts for the current process, use:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+## 4. Create a session manually in OCI Console
 
 In OCI Console:
 
@@ -106,7 +157,7 @@ OCI creates a time-limited command that includes the correct bastion endpoint,
 session identity, and key options.  Use that copied command as the source of
 truth rather than replacing it with a guessed bastion hostname.
 
-## 4. Open Streamlit on the laptop
+## 5. Open Streamlit manually on the laptop
 
 On the laptop, take the SSH command copied from the managed-SSH session and
 add these options immediately after `ssh`:
@@ -139,7 +190,7 @@ ssh -N -L 18501:127.0.0.1:8501 <the-rest-of-the-OCI-command>
 
 Then browse to `http://127.0.0.1:18501/`.
 
-## 5. Troubleshooting
+## 6. Troubleshooting
 
 ```bash
 # On the server
@@ -150,6 +201,11 @@ sudo -u focusloader test -r /opt/oracle/wallet/tnsnames.ora
 # On the laptop: check whether the local forward is listening
 netstat -ano | findstr :8501
 ```
+
+For PowerShell launcher diagnostics, add `-Verbose`. If session creation is
+rejected, confirm the OCI CLI profile, Bastion OCID, Compute OCID, target
+private IP, session-management IAM policy, Bastion CIDR allowlist, and that the
+Compute Bastion plugin is running.
 
 If the managed session cannot be created, confirm the Oracle Cloud Agent and
 Bastion plugin status, the instance network route/security rules from the
