@@ -28,6 +28,19 @@ type tnsAliasResponse struct {
 	Error      string `json:"error,omitempty"`
 }
 
+type tnsAliasesResponse struct {
+	Aliases    []string `json:"aliases"`
+	FirstAlias string   `json:"firstAlias"`
+	SourcePath string   `json:"sourcePath"`
+	ReadAtUTC  string   `json:"readAtUtc"`
+	Error      string   `json:"error,omitempty"`
+}
+
+type tnsGUIHealthResponse struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+}
+
 func runTNSGUI(ctx context.Context, listenAddress string) error {
 	listenAddress = strings.TrimSpace(listenAddress)
 	if listenAddress == "" {
@@ -89,14 +102,29 @@ func isLoopbackHost(host string) bool {
 
 func newTNSGUIHandler(getenv func(string) string) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		setTNSGUIJSONHeaders(w)
+		if !requireTNSGUIGet(w, r) {
+			return
+		}
+		_ = json.NewEncoder(w).Encode(tnsGUIHealthResponse{Status: "ok", Version: version})
+	})
+	mux.HandleFunc("/api/v1/tns/aliases", func(w http.ResponseWriter, r *http.Request) {
+		setTNSGUIJSONHeaders(w)
+		if !requireTNSGUIGet(w, r) {
+			return
+		}
+
+		response, err := tnsAliasesFromEnvironment(getenv)
+		if err != nil {
+			response.Error = err.Error()
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		_ = json.NewEncoder(w).Encode(response)
+	})
 	mux.HandleFunc("/api/tns-alias", func(w http.ResponseWriter, r *http.Request) {
-		setTNSGUISecurityHeaders(w)
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			_ = json.NewEncoder(w).Encode(tnsAliasResponse{Error: "method not allowed"})
+		setTNSGUIJSONHeaders(w)
+		if !requireTNSGUIGet(w, r) {
 			return
 		}
 
@@ -125,6 +153,22 @@ func newTNSGUIHandler(getenv func(string) string) http.Handler {
 	return mux
 }
 
+func setTNSGUIJSONHeaders(w http.ResponseWriter) {
+	setTNSGUISecurityHeaders(w)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+}
+
+func requireTNSGUIGet(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodGet {
+		return true
+	}
+	w.Header().Set("Allow", http.MethodGet)
+	w.WriteHeader(http.StatusMethodNotAllowed)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+	return false
+}
+
 func setTNSGUISecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -133,7 +177,23 @@ func setTNSGUISecurityHeaders(w http.ResponseWriter) {
 }
 
 func firstTNSAliasFromEnvironment(getenv func(string) string) (tnsAliasResponse, error) {
-	response := tnsAliasResponse{ReadAtUTC: time.Now().UTC().Format(time.RFC3339)}
+	aliasesResponse, err := tnsAliasesFromEnvironment(getenv)
+	response := tnsAliasResponse{
+		SourcePath: aliasesResponse.SourcePath,
+		ReadAtUTC:  aliasesResponse.ReadAtUTC,
+	}
+	if err != nil {
+		return response, err
+	}
+	response.Alias = aliasesResponse.FirstAlias
+	return response, nil
+}
+
+func tnsAliasesFromEnvironment(getenv func(string) string) (tnsAliasesResponse, error) {
+	response := tnsAliasesResponse{
+		Aliases:   []string{},
+		ReadAtUTC: time.Now().UTC().Format(time.RFC3339),
+	}
 	tnsAdmin := strings.TrimSpace(getenv("TNS_ADMIN"))
 	if tnsAdmin == "" {
 		return response, fmt.Errorf("TNS_ADMIN is not set for the GUI process")
@@ -151,18 +211,29 @@ func firstTNSAliasFromEnvironment(getenv func(string) string) (tnsAliasResponse,
 	}
 	defer file.Close()
 
-	alias, err := parseFirstTNSAlias(file)
+	aliases, err := parseTNSAliases(file)
 	if err != nil {
 		return response, fmt.Errorf("read %s: %w", path, err)
 	}
-	response.Alias = alias
+	response.Aliases = aliases
+	response.FirstAlias = aliases[0]
 	return response, nil
 }
 
 func parseFirstTNSAlias(reader io.Reader) (string, error) {
+	aliases, err := parseTNSAliases(reader)
+	if err != nil {
+		return "", err
+	}
+	return aliases[0], nil
+}
+
+func parseTNSAliases(reader io.Reader) ([]string, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), maxTNSLineSize)
 	pending := make([]string, 0, 2)
+	aliases := make([]string, 0, 8)
+	seen := make(map[string]struct{})
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(stripTNSComment(scanner.Text()))
@@ -186,21 +257,28 @@ func parseFirstTNSAlias(reader io.Reader) (string, error) {
 
 		leftSide := strings.TrimSpace(strings.Join(append(pending, line[:equalsIndex]), " "))
 		pending = pending[:0]
-		aliases := strings.Split(leftSide, ",")
-		for _, candidate := range aliases {
+		candidates := strings.Split(leftSide, ",")
+		for _, candidate := range candidates {
 			candidate = strings.TrimSpace(candidate)
 			if strings.EqualFold(candidate, "IFILE") {
 				break
 			}
 			if isTNSAlias(candidate) {
-				return candidate, nil
+				key := strings.ToLower(candidate)
+				if _, exists := seen[key]; !exists {
+					seen[key] = struct{}{}
+					aliases = append(aliases, candidate)
+				}
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return "", err
+		return nil, err
 	}
-	return "", fmt.Errorf("no TNS alias entry was found")
+	if len(aliases) == 0 {
+		return nil, fmt.Errorf("no TNS alias entry was found")
+	}
+	return aliases, nil
 }
 
 func stripTNSComment(line string) string {

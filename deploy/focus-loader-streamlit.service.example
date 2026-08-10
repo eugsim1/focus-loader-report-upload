@@ -1,0 +1,31 @@
+[Unit]
+Description=FOCUS Loader Streamlit frontend
+After=network.target focus-loader-tns-gui.service
+Requires=focus-loader-tns-gui.service
+
+[Service]
+Type=simple
+User=focusloader
+Group=focusloader
+WorkingDirectory=/opt/focus-loader/streamlit-ui
+EnvironmentFile=/etc/focus-loader/streamlit.env
+Environment=HOME=/var/lib/focus-loader-streamlit
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/focus-loader/streamlit-ui/.venv/bin/streamlit run app.py --server.address=127.0.0.1 --server.port=8501 --server.headless=true
+Restart=on-failure
+RestartSec=5s
+StateDirectory=focus-loader-streamlit
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

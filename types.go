@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.5.3-tns-gui"
+	version       = "26.5.4-streamlit"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

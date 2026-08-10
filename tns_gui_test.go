@@ -69,6 +69,26 @@ func TestParseFirstTNSAliasNoEntry(t *testing.T) {
 	}
 }
 
+func TestParseTNSAliasesPreservesOrderAndRemovesDuplicates(t *testing.T) {
+	content := `FIRST, FIRST_COMPAT = (DESCRIPTION = (ADDRESS = (PROTOCOL = TCPS)))
+SECOND = (DESCRIPTION = (ADDRESS = (PROTOCOL = TCPS)))
+first = (DESCRIPTION = (ADDRESS = (PROTOCOL = TCPS)))
+`
+	got, err := parseTNSAliases(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("parseTNSAliases() error = %v", err)
+	}
+	want := []string{"FIRST", "FIRST_COMPAT", "SECOND"}
+	if len(got) != len(want) {
+		t.Fatalf("parseTNSAliases() = %#v, want %#v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("parseTNSAliases()[%d] = %q, want %q", index, got[index], want[index])
+		}
+	}
+}
+
 func TestFirstTNSAliasFromEnvironment(t *testing.T) {
 	tnsAdmin := t.TempDir()
 	path := filepath.Join(tnsAdmin, tnsNamesFileName)
@@ -122,6 +142,54 @@ func TestTNSGUIAPI(t *testing.T) {
 	}
 	if response.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", response.Header().Get("Cache-Control"))
+	}
+}
+
+func TestTNSGUIVersionedAliasesAPI(t *testing.T) {
+	tnsAdmin := t.TempDir()
+	path := filepath.Join(tnsAdmin, tnsNamesFileName)
+	content := "FIRST_SERVICE = (DESCRIPTION = (ADDRESS = (PROTOCOL = TCPS)))\nSECOND_SERVICE = (DESCRIPTION = (ADDRESS = (PROTOCOL = TCPS)))\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := newTNSGUIHandler(func(name string) string {
+		if name == "TNS_ADMIN" {
+			return tnsAdmin
+		}
+		return ""
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/tns/aliases", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var payload tnsAliasesResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.FirstAlias != "FIRST_SERVICE" || len(payload.Aliases) != 2 {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
+func TestTNSGUIHealthAPI(t *testing.T) {
+	handler := newTNSGUIHandler(func(string) string { return "" })
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var payload tnsGUIHealthResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status != "ok" || payload.Version != version {
+		t.Fatalf("unexpected payload: %#v", payload)
 	}
 }
 

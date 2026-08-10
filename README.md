@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.5.3-tns-gui`
+Version `26.5.4-streamlit`
 
 > **Independent project disclaimer**
 >
@@ -13,6 +13,7 @@ This Go application retrieves OCI FOCUS cost reports from Object Storage, transf
 - upload each transformed CSV and then load it;
 - generate pre-load detail, summary, and capacity-planning reports;
 - display the first `$TNS_ADMIN/tnsnames.ora` alias in a lightweight, read-only browser interface;
+- provide an optional modular Streamlit interface for alias selection, diagnostics, and validated command generation;
 - run incrementally from cron with durable load and upload checkpoints.
 
 An [Ansible project](ansible/README.md) is included to build the Linux binary,
@@ -91,11 +92,52 @@ The database scenario can optionally upload the enriched CSV first by combining 
 
 The editable diagram embeds Object Storage, Compute VM, IAM, Vault, and Autonomous Data Warehouse stencils from Oracle's official [OCI Architecture Diagram Toolkit](https://docs.oracle.com/en-us/iaas/Content/General/Reference/graphicsfordiagrams.htm).
 
+## Modular Streamlit frontend
+
+The optional [Streamlit frontend](streamlit-ui/README.md) runs as an independent
+Python service. It calls versioned, read-only endpoints in the Go process and
+does not access the wallet or `tnsnames.ora` itself. This keeps form, navigation,
+chart, and future dashboard work outside the loader binary.
+
+Current interactions include:
+
+- backend health and version checks;
+- display and selection of every alias in `$TNS_ADMIN/tnsnames.ora`;
+- diagnostic API output without connect descriptors or wallet content;
+- a validated command builder covering all four loader processing modes;
+- POSIX-safe command preview and reviewed shell-script download.
+
+The interface deliberately does not execute the generated command and never
+asks for a database password. Use the Vault secret OCID field and review the
+downloaded command before manual execution. Both the Go API and Streamlit
+services bind to loopback by default and are reached through SSH/OCI Bastion or
+an authenticated TLS reverse proxy.
+
+Quick deployment after installing the `26.5.4-streamlit` Go binary:
+
+```bash
+sudo dnf install -y python3.11 python3.11-pip
+sudo TNS_ADMIN=/opt/oracle/wallet PYTHON_BIN=python3.11 \
+  ./scripts/install-streamlit-ui.sh
+./scripts/test-streamlit-ui.sh
+```
+
+From a workstation:
+
+```bash
+ssh -N -L 8501:127.0.0.1:8501 opc@SERVER_IP
+```
+
+Then open `http://127.0.0.1:8501/`. Complete installation, manual deployment,
+systemd, API, upgrade, rollback, and troubleshooting steps are in
+[`streamlit-ui/README.md`](streamlit-ui/README.md).
+
 ## Contents
 
 - [Goal of this utility](#goal-of-this-utility)
 - [Primary use cases](#primary-use-cases)
 - [Architecture diagram](#architecture-diagram)
+- [Modular Streamlit frontend](#modular-streamlit-frontend)
 - [Processing modes](#processing-modes)
 - [How incremental processing works](#how-incremental-processing-works)
 - [Requirements](#requirements)
@@ -105,6 +147,7 @@ The editable diagram embeds Object Storage, Compute VM, IAM, Vault, and Autonomo
 - [Database setup](#database-setup)
 - [Build and test](#build-and-test)
 - [Read-only TNS alias GUI](README_TNS_GUI.md)
+- [Complete Streamlit deployment guide](streamlit-ui/README.md)
 - [Complete command-line flag reference](#complete-command-line-flag-reference)
 - [Usage examples](#usage-examples)
 - [Cron-based incremental retrieval](#cron-based-incremental-retrieval)
@@ -167,6 +210,7 @@ The upload checkpoint is appended only after the transformed CSV is accepted by 
 - Source Object Storage read access and, for upload modes, destination write access.
 - Oracle tables matching `focus.conf`.
 - `flock` and cron for the supplied scheduled-run wrapper.
+- Optional Streamlit frontend: Oracle Linux 8.8 or newer, Python 3.11, `python3.11-pip`, and `curl`.
 
 ## Linux installation
 
@@ -456,6 +500,17 @@ sha256sum /opt/focus-loader/focus-loader-report-upload
 ```
 
 The executable dynamically loads Oracle client libraries. A binary that builds successfully can still fail at runtime if `libclntsh.so` is unavailable.
+
+Test the modular frontend support code without starting a server:
+
+```bash
+cd streamlit-ui
+python3.11 -m unittest discover -s tests -v
+python3.11 -m compileall -q app.py focus_api.py command_builder.py tests
+```
+
+For an interactive development server, create an isolated virtual environment
+and follow [streamlit-ui/README.md](streamlit-ui/README.md).
 
 ## Complete command-line flag reference
 
@@ -870,31 +925,32 @@ The program returns an error to avoid silently losing incremental state. Fix per
 - Enable destination bucket versioning when overwrite recovery is required.
 - Back up persistent checkpoint files and monitor cron exit status.
 - Review all scripts and policies for your tenancy before deployment.
+- Keep the Go API and Streamlit listeners on loopback; use SSH/OCI Bastion or an authenticated TLS reverse proxy.
+- Treat Streamlit as a presentation service: it must not receive plaintext database passwords or execute arbitrary loader commands.
 
 ## Publish to GitHub
 
 The public repository is `https://github.com/eugsim1/focus-loader-report-upload`. To publish a reviewed local change:
 
 ```bash
-cd focus-loader-report-upload-v26.5.1
-git init
-git branch -M main
+cd focus-loader-report-upload
 git add .
 git status --short
 git diff --cached --check
-git commit -m 'Release 26.5.1-go-incremental-upload'
-git remote add origin git@github.com:eugsim1/focus-loader-report-upload.git
-git push -u origin main
-git tag -a v26.5.1 -m '26.5.1 incremental upload release'
-git push origin v26.5.1
+git commit -m 'Add modular Streamlit frontend'
+git push origin main
 ```
 
-The included `.github/workflows/ci.yml` runs module verification, tests, and a Linux CGO build. It does not package Oracle Instant Client; production hosts must install the client separately.
+The included `.github/workflows/ci.yml` runs Go module verification, Go tests,
+Streamlit support-module tests, Python compilation checks, and a Linux CGO
+build. It does not package Oracle Instant Client; production hosts must install
+the client separately.
 
 ## Additional documentation
 
 - `Location.md`: documentation-safe local project location; the project itself was not moved.
 - `README_TNS_GUI.md`: read-only TNS alias GUI, Oracle Linux 8 service installation, SSH access, and troubleshooting.
+- `streamlit-ui/README.md`: complete modular Streamlit architecture, installation, systemd, use, tests, security, upgrade, rollback, and troubleshooting guide.
 - `README_REPORT_UPLOAD.md`: transformed upload behavior and report schema.
 - `README_PRELOAD_REPORT.md`: pre-load and capacity report details.
 - `CHANGELOG.md`: release history.

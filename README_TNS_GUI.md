@@ -7,6 +7,10 @@ interface. It is compiled into the existing `focus-loader-report-upload`
 binary and therefore does not require Node.js, Python, Streamlit, a graphical
 desktop, X11, or another service runtime.
 
+For a flexible multi-form interface, this repository now also includes a
+separate [modular Streamlit frontend](streamlit-ui/README.md). The embedded page
+remains a useful low-dependency fallback and supplies its read-only Go API.
+
 Start it with `-tns-gui`. This mode exits before OCI and database credential
 validation, so `-du`, `-dn`, `-dp`, `-ds`, OCI configuration, and instance
 principal permissions are not required merely to display the alias.
@@ -84,8 +88,14 @@ No loader database password or OCI credentials are needed in this mode. Test
 the server locally from a second terminal:
 
 ```bash
+curl -fsS http://127.0.0.1:8080/api/v1/health
+curl -fsS http://127.0.0.1:8080/api/v1/tns/aliases
 curl -fsS http://127.0.0.1:8080/api/tns-alias
 ```
+
+The versioned aliases endpoint returns every top-level alias in file order for
+the Streamlit selector. The original endpoint returns only the first alias and
+is retained for compatibility.
 
 Example response:
 

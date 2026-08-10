@@ -18,6 +18,10 @@ logs/
 *.download
 .gomodcache/
 .gopath/
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
 
 # Build outputs
 dist/*

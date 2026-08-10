@@ -1,5 +1,12 @@
 # Changelog
 
+## 26.5.4-streamlit
+
+- Added a separate Streamlit frontend with TNS alias selection, backend diagnostics, and a validated loader-command builder.
+- Added versioned Go health and all-alias endpoints while retaining the original embedded-page endpoint.
+- Added Oracle Linux 8 installation and smoke-test scripts, hardened systemd deployment assets, and extensive standalone documentation.
+- Added Python unit tests and GitHub Actions checks for the Streamlit support modules.
+
 ## 26.5.3-tns-gui
 
 - Added `-tns-gui`, a lightweight read-only browser interface compiled into the existing Go binary.
