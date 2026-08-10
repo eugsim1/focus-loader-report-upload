@@ -106,24 +106,46 @@ function Invoke-NativeText {
         [string[]]$Arguments
     )
 
-    $stdoutPath = [System.IO.Path]::GetTempFileName()
-    $stderrPath = [System.IO.Path]::GetTempFileName()
+    Write-Verbose ("Running: {0} {1}" -f $Executable, ($Arguments -join ' '))
+
+    # Windows PowerShell 5.1 represents each native stderr line as an
+    # ErrorRecord. Merge the native streams temporarily, classify the records,
+    # and reconstruct stdout/stderr without PowerShell's location metadata.
+    $previousErrorActionPreference = $ErrorActionPreference
     try {
-        Write-Verbose ("Running: {0} {1}" -f $Executable, ($Arguments -join ' '))
-        & $Executable @Arguments 1> $stdoutPath 2> $stderrPath
+        $ErrorActionPreference = 'Continue'
+        $records = @(& $Executable @Arguments 2>&1)
         $exitCode = $LASTEXITCODE
-        $stdout = [System.IO.File]::ReadAllText($stdoutPath).Trim()
-        $stderr = [System.IO.File]::ReadAllText($stderrPath).Trim()
     }
     finally {
-        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        $ErrorActionPreference = $previousErrorActionPreference
     }
 
+    $stdoutLines = New-Object 'System.Collections.Generic.List[string]'
+    $stderrLines = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($record in $records) {
+        if ($record -is [System.Management.Automation.ErrorRecord]) {
+            $stderrLines.Add($record.ToString().TrimEnd())
+        }
+        else {
+            $stdoutLines.Add($record.ToString())
+        }
+    }
+    $stdout = ($stdoutLines -join [Environment]::NewLine).Trim()
+    $stderr = ($stderrLines -join [Environment]::NewLine).Trim()
+
+    if ($exitCode -ne 0) {
+        $details = $stderr
+        if (-not $details) {
+            $details = $stdout
+        }
+        if (-not $details) {
+            $details = 'The command returned no diagnostic output.'
+        }
+        throw "Command failed with exit code ${exitCode}: $Executable $($Arguments -join ' ')`n$details"
+    }
     if ($stderr) {
         Write-Warning $stderr
-    }
-    if ($exitCode -ne 0) {
-        throw "Command failed with exit code ${exitCode}: $Executable $($Arguments -join ' ')"
     }
     return $stdout
 }

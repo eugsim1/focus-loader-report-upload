@@ -205,7 +205,8 @@ netstat -ano | findstr :8501
 For PowerShell launcher diagnostics, add `-Verbose`. If session creation is
 rejected, confirm the OCI CLI profile, Bastion OCID, Compute OCID, target
 private IP, session-management IAM policy, Bastion CIDR allowlist, and that the
-Compute Bastion plugin is running.
+Compute Bastion plugin is running. The launcher preserves OCI CLI stderr and
+prints the complete service diagnostic, including its status code and message.
 
 If the managed session cannot be created, confirm the Oracle Cloud Agent and
 Bastion plugin status, the instance network route/security rules from the

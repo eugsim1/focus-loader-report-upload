@@ -1,5 +1,12 @@
 # Changelog
 
+## 26.5.7-powershell-oci-errors
+
+- Fixed Windows PowerShell 5.1 handling of OCI CLI stderr so a service error no
+  longer terminates the launcher as an opaque `NativeCommandError`.
+- Preserved successful OCI warnings while including the complete OCI diagnostic
+  in failures, making IAM, region, profile, and OCID problems actionable.
+
 ## 26.5.6-powershell-bastion-tunnel
 
 - Added a Windows PowerShell launcher that creates a managed-SSH session on an
