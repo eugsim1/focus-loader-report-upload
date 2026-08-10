@@ -260,8 +260,8 @@ grep -nE '^[[:space:]]*[A-Za-z0-9_.-]+[[:space:]]*=' \
 - The target-schema password is held only for the deployment request and the
   created-schema table lookup. Both passwords are redacted from output/errors,
   never logged, and never included in a response.
-- `dropExisting` defaults to false. The Streamlit form requires the exact
-  `DROP <SCHEMA>` confirmation before requesting destructive replacement.
+- `dropExisting` defaults to false. The Streamlit form uses one explicit
+  checkbox to request deletion before recreating the target schema.
 - The source path is fixed from the server-side environment; the browser cannot
   request an arbitrary file.
 - The implementation is independent software and is not affiliated with,

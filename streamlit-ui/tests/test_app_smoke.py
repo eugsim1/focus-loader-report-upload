@@ -25,7 +25,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
         class BackendHandler(BaseHTTPRequestHandler):
             def do_GET(self):
                 if self.path == "/api/v1/health":
-                    payload = {"status": "ok", "version": "26.8.0-command-builder-flags"}
+                    payload = {"status": "ok", "version": "26.8.1-schema-drop-checkbox"}
                 elif self.path == "/api/v1/tns/aliases":
                     payload = {
                         "aliases": ["FOCUS_HIGH", "FOCUS_LOW"],
@@ -68,6 +68,14 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.assertEqual(len(app.exception), 0)
                 self.assertGreaterEqual(len(app.tabs), 5)
                 self.assertEqual(app.tabs[1].label, "Deploy schema")
+                self.assertIn(
+                    "Drop the existing target schema and all its objects",
+                    [checkbox.label for checkbox in app.checkbox],
+                )
+                self.assertNotIn(
+                    "Destructive-action confirmation",
+                    [text_input.label for text_input in app.text_input],
+                )
         finally:
             server.shutdown()
             server.server_close()

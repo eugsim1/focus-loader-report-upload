@@ -324,7 +324,7 @@ func TestTNSGUISchemaDeploymentRequiresSuccessfulLoginAndUsesCreatedSchemaPasswo
 	}
 
 	deployJSON := fmt.Sprintf(
-		`{"deploymentToken":%q,"targetSchema":"focus_app","targetSchemaPassword":"target-secret","dropExisting":false,"dropConfirmation":""}`,
+		`{"deploymentToken":%q,"targetSchema":"focus_app","targetSchemaPassword":"target-secret","dropExisting":true}`,
 		loginPayload.DeploymentToken,
 	)
 	deployRequest := httptest.NewRequest(http.MethodPost, "/api/v1/schema/deploy", bytes.NewBufferString(deployJSON))
@@ -343,7 +343,8 @@ func TestTNSGUISchemaDeploymentRequiresSuccessfulLoginAndUsesCreatedSchemaPasswo
 	}
 	if runnerInput.AdminUsername != "ADMIN" || runnerInput.AdminPassword != "admin-secret" ||
 		runnerInput.TargetSchema != "FOCUS_APP" || runnerInput.TargetSchemaPassword != "target-secret" ||
-		runnerInput.ConnectAlias != "FIRST_SERVICE" || runnerInput.ScriptDirectory != scriptDirectory {
+		runnerInput.ConnectAlias != "FIRST_SERVICE" || runnerInput.ScriptDirectory != scriptDirectory ||
+		!runnerInput.DropExisting {
 		t.Fatalf("unexpected runner input: %#v", runnerInput)
 	}
 	if strings.Contains(deployResponse.Body.String(), "admin-secret") || strings.Contains(deployResponse.Body.String(), "target-secret") {

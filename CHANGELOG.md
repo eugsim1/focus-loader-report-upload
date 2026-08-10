@@ -1,5 +1,18 @@
 # Changelog
 
+## 26.8.1-schema-drop-checkbox
+
+- Removed the typed `DROP <SCHEMA>` confirmation field from the Streamlit
+  schema-deployment form.
+- Use the single **Drop the existing target schema and all its objects**
+  checkbox to request deletion; when selected, the fixed deployment script
+  drops the schema and its objects before recreating it.
+- Kept protected-schema checks, administrator/target separation, one-use
+  authorization, password confirmation, output redaction, and server-controlled
+  script execution unchanged.
+- Simplified the deployment API client payload and expanded Go/Streamlit tests
+  for checkbox-only destructive replacement.
+
 ## 26.8.0-command-builder-flags
 
 - Reworked the Streamlit command builder so direct `-dp` database-password

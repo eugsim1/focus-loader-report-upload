@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.8.0-command-builder-flags`
+Version `26.8.1-schema-drop-checkbox`
 
 > **Independent project disclaimer**
 >
@@ -125,7 +125,7 @@ deployment script, with server-controlled TNS and configuration paths. Both
 services bind to loopback by default and are reached through SSH/OCI Bastion or
 an authenticated TLS reverse proxy.
 
-Quick deployment after installing the `26.8.0-command-builder-flags` Go binary:
+Quick deployment after installing the `26.8.1-schema-drop-checkbox` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip

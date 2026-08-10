@@ -29,10 +29,10 @@ class RecordingOpener:
 
 class FocusAPIClientTests(unittest.TestCase):
     def test_health(self):
-        opener = RecordingOpener({"status": "ok", "version": "26.8.0-command-builder-flags"})
+        opener = RecordingOpener({"status": "ok", "version": "26.8.1-schema-drop-checkbox"})
         result = FocusAPIClient("http://127.0.0.1:8080/", opener=opener).health()
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.version, "26.8.0-command-builder-flags")
+        self.assertEqual(result.version, "26.8.1-schema-drop-checkbox")
         self.assertEqual(opener.urls[0][0], "http://127.0.0.1:8080/api/v1/health")
 
     def test_aliases(self):
@@ -101,7 +101,7 @@ class FocusAPIClientTests(unittest.TestCase):
             }
         )
         result = FocusAPIClient("http://127.0.0.1:8080", opener=opener).deploy_schema(
-            "opaque-token", "FOCUS_APP", "target-secret", False, ""
+            "opaque-token", "FOCUS_APP", "target-secret", False
         )
         self.assertTrue(result.deployment_succeeded)
         self.assertEqual(result.tables[0].table_name, "TEMP_OCI_FOCUS")
@@ -115,7 +115,6 @@ class FocusAPIClientTests(unittest.TestCase):
                 "targetSchema": "FOCUS_APP",
                 "targetSchemaPassword": "target-secret",
                 "dropExisting": False,
-                "dropConfirmation": "",
             },
         )
         self.assertNotIn("target-secret", request.full_url)
@@ -140,7 +139,7 @@ class FocusAPIClientTests(unittest.TestCase):
             }
         )
         result = FocusAPIClient("http://127.0.0.1:8080", opener=opener).deploy_schema(
-            "opaque-token", "FOCUS_APP", "target-secret", True, "DROP FOCUS_APP"
+            "opaque-token", "FOCUS_APP", "target-secret", True
         )
         self.assertFalse(result.deployment_succeeded)
         self.assertEqual(result.exit_code, 1)

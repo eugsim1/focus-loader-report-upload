@@ -269,13 +269,11 @@ def render_schema_deployment(api_url: str, catalog: AliasCatalog) -> None:
             drop_existing = st.checkbox(
                 "Drop the existing target schema and all its objects",
                 value=False,
-                help="Leave disabled to retain an existing schema and update its password.",
+                help=(
+                    "When selected, the deployment script deletes the existing schema "
+                    "and all its objects before creating it again."
+                ),
             )
-            drop_confirmation = st.text_input(
-                "Destructive-action confirmation",
-                placeholder="Enter DROP FOCUS_APP only when drop-existing is enabled",
-                help="Required only when the drop-existing option is selected.",
-            ).strip()
             submitted = st.form_submit_button("Run schema deployment", type="primary")
 
         if submitted:
@@ -294,8 +292,6 @@ def render_schema_deployment(api_url: str, catalog: AliasCatalog) -> None:
                 validation_error = "Target schema password is required."
             elif target_password != confirm_password:
                 validation_error = "The target schema passwords do not match."
-            elif drop_existing and drop_confirmation != f"DROP {target_schema}":
-                validation_error = f"Enter DROP {target_schema} to confirm schema deletion."
 
             if validation_error:
                 st.error(validation_error)
@@ -312,7 +308,6 @@ def render_schema_deployment(api_url: str, catalog: AliasCatalog) -> None:
                             target_schema,
                             target_password,
                             drop_existing,
-                            drop_confirmation,
                         )
                     st.session_state["schema_deployment_result"] = result
                 except FocusAPIError as error:

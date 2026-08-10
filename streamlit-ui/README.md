@@ -123,7 +123,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.8.0-command-builder-flags"
+  "version": "26.8.1-schema-drop-checkbox"
 }
 ```
 
@@ -210,16 +210,16 @@ Request body:
   "deploymentToken": "opaque-one-use-value",
   "targetSchema": "FOCUS_APP",
   "targetSchemaPassword": "submitted-only-at-runtime",
-  "dropExisting": false,
-  "dropConfirmation": ""
+  "dropExisting": false
 }
 ```
 
 The backend supplies `TNS_ADMIN`, the first TNS alias, the authenticated
 administrator user/password, fixed working and parent `focus.conf` paths, and
 the fixed script path. The browser cannot select another shell script, TNS
-directory, alias, or configuration path. `dropExisting=true` requires the UI
-confirmation text `DROP <SCHEMA>`, which is also validated by the backend.
+directory, alias, or configuration path. The form's `dropExisting` checkbox is
+the only deletion confirmation; when selected, the fixed script drops the
+existing schema and all its objects before recreating it.
 Common administrative schemas and the authenticated login schema are rejected
 as deployment targets.
 
@@ -279,7 +279,7 @@ sudo install -o focusloader -g focusloader -m 0750 \
 Expected version:
 
 ```text
-focus-loader-report-upload 26.8.0-command-builder-flags
+focus-loader-report-upload 26.8.1-schema-drop-checkbox
 ```
 
 ## 2. Verify TNS permissions
@@ -513,8 +513,8 @@ This tab does not accept SQL text and does not need a `.sql` file.
 4. Leave **Drop the existing target schema** disabled to preserve an existing
    user. The deployment DDL is not idempotent, so an existing set of tables can
    still cause the script to fail.
-5. To replace a schema, enable the destructive option and enter
-   `DROP <SCHEMA>` exactly. This runs `DROP USER ... CASCADE`.
+5. To replace a schema, select **Drop the existing target schema and all its
+   objects**. This runs `DROP USER ... CASCADE` before schema creation.
 6. Select **Run schema deployment** and wait for the console result.
 7. Review the exit code, redacted output, and table list obtained by connecting
    as the target schema with the same target password.
@@ -606,7 +606,7 @@ sudo grep '^FOCUS_API_URL=' /etc/focus-loader/streamlit.env
 ```
 
 An older binary does not have `/api/v1/schema/deploy`; install the
-`26.8.0-command-builder-flags` binary before using the current interface.
+`26.8.1-schema-drop-checkbox` binary before using the current interface.
 
 ### The alias endpoint returns an error
 
@@ -727,8 +727,9 @@ directory to roll back application code.
 - The installer makes the script and its directory root-owned. The hardened Go
   service receives write access only to the installed working and parent
   `focus.conf` files.
-- `dropExisting` defaults to false and destructive replacement requires explicit
-  UI confirmation. Use database auditing/change controls for production runs.
+- `dropExisting` defaults to false. The single destructive-replacement checkbox
+  must be selected to drop and recreate a schema. Use database auditing/change
+  controls for production runs.
 - The command builder remains separate from execution. Its password preview is
   redacted, its downloaded script prompts securely at runtime, and neither
   artifact stores the submitted password.

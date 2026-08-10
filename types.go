@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.8.0-command-builder-flags"
+	version       = "26.8.1-schema-drop-checkbox"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

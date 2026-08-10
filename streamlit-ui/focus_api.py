@@ -151,7 +151,6 @@ class FocusAPIClient:
         target_schema: str,
         target_schema_password: str,
         drop_existing: bool,
-        drop_confirmation: str,
     ) -> SchemaDeployment:
         payload = self._request_json(
             "/api/v1/schema/deploy",
@@ -161,7 +160,6 @@ class FocusAPIClient:
                 "targetSchema": target_schema,
                 "targetSchemaPassword": target_schema_password,
                 "dropExisting": drop_existing,
-                "dropConfirmation": drop_confirmation,
             },
             timeout_seconds=max(self.timeout_seconds, 630.0),
             raise_api_error=False,

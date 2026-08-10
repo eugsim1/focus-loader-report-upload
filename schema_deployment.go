@@ -31,7 +31,8 @@ type schemaDeploymentRequest struct {
 	TargetSchema         string `json:"targetSchema"`
 	TargetSchemaPassword string `json:"targetSchemaPassword"`
 	DropExisting         bool   `json:"dropExisting"`
-	DropConfirmation     string `json:"dropConfirmation"`
+	// DropConfirmation is accepted for backward compatibility but is no longer required.
+	DropConfirmation string `json:"dropConfirmation,omitempty"`
 }
 
 type schemaDeploymentResponse struct {
@@ -202,7 +203,6 @@ func handleSchemaDeployment(
 	}
 
 	request.TargetSchema = strings.ToUpper(strings.TrimSpace(request.TargetSchema))
-	request.DropConfirmation = strings.TrimSpace(request.DropConfirmation)
 	if !unquotedOracleIdentifier.MatchString(request.TargetSchema) {
 		writeSchemaDeploymentError(w, http.StatusBadRequest, "target schema must be an unquoted Oracle identifier")
 		return
@@ -213,10 +213,6 @@ func handleSchemaDeployment(
 	}
 	if _, protected := protectedDeploymentSchemas[request.TargetSchema]; protected {
 		writeSchemaDeploymentError(w, http.StatusBadRequest, "the target schema is protected and cannot be deployed by this interface")
-		return
-	}
-	if request.DropExisting && request.DropConfirmation != "DROP "+request.TargetSchema {
-		writeSchemaDeploymentError(w, http.StatusBadRequest, "drop-existing requires the exact confirmation DROP "+request.TargetSchema)
 		return
 	}
 	if request.DeploymentToken == "" {
