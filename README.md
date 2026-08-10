@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.5.11-api-key-one-line-command`
+Version `26.5.12-browser-one-line-command`
 
 > **Independent project disclaimer**
 >

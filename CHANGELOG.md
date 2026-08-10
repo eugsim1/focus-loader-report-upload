@@ -1,5 +1,12 @@
 # Changelog
 
+## 26.5.12-browser-one-line-command
+
+- Updated the Windows browser-authentication guide with the complete one-line
+  `powershell.exe -File` command for the current deployment.
+- Included the validated Bastion, Compute, private-IP, SSH-key, region, and
+  `BASTION` profile parameters while keeping private-key contents uncommitted.
+
 ## 26.5.11-api-key-one-line-command
 
 - Updated the Windows API-key authentication guide with the complete validated

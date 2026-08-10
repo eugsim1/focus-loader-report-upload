@@ -80,8 +80,11 @@ unless `-KeepSession` is supplied.
 ## One-line CMD invocation
 
 ```cmd
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\windows-browser-auth-streamlit\connect-streamlit-browser-auth.ps1" -BastionId "ocid1.bastion.oc1.eu-frankfurt-1.REPLACE" -InstanceId "ocid1.instance.oc1.eu-frankfurt-1.REPLACE" -PrivateIp "10.30.1.10" -Region "eu-frankfurt-1" -SshPrivateKeyPath "C:\Users\YOUR_USER\.ssh\bastion_ed25519" -ProfileName "BASTION"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-browser-auth-streamlit\connect-streamlit-browser-auth.ps1" -BastionId "ocid1.bastion.oc1.eu-frankfurt-1.amaaaaaattkvkkiavieclqbepigrnbctut4ievpfm77c2yua3i26ngvegjfa" -InstanceId "ocid1.instance.oc1.eu-frankfurt-1.antheljrttkvkkicjuge3ytieelol5jnyuqa23em37zb7jrucmub7kkuitia" -PrivateIp "10.30.1.159" -Region "eu-frankfurt-1" -SshPrivateKeyPath "C:\Users\root\.ssh\key_03-05-23-17-28" -ProfileName "BASTION"
 ```
+
+This command contains deployment-specific OCIDs and local paths. Keep the SSH
+private key itself only on the laptop and never add it to the repository.
 
 ## Reuse or refresh the token
 
