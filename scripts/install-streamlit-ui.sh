@@ -14,6 +14,7 @@ SERVICE_GROUP=${SERVICE_GROUP:-focusloader}
 PYTHON_BIN=${PYTHON_BIN:-python3.11}
 TNS_ADMIN=${TNS_ADMIN:-/opt/oracle/wallet}
 FOCUS_API_URL=${FOCUS_API_URL:-http://127.0.0.1:8080}
+SQLPLUS_BIN=${SQLPLUS_BIN:-$(command -v sqlplus || true)}
 
 if ! id "${SERVICE_USER}" >/dev/null 2>&1; then
   echo "ERROR: service account ${SERVICE_USER} does not exist" >&2
@@ -37,9 +38,19 @@ if ! runuser -u "${SERVICE_USER}" -- test -r "${TNS_ADMIN}/tnsnames.ora"; then
   echo "ERROR: ${SERVICE_USER} cannot read ${TNS_ADMIN}/tnsnames.ora" >&2
   exit 1
 fi
+if [[ -z "${SQLPLUS_BIN}" || ! -x "${SQLPLUS_BIN}" ]]; then
+  echo "ERROR: sqlplus is required for schema deployment but was not found" >&2
+  echo "Set SQLPLUS_BIN=/absolute/path/to/sqlplus and rerun this installer." >&2
+  exit 1
+fi
+if ! runuser -u "${SERVICE_USER}" -- test -x "${SQLPLUS_BIN}"; then
+  echo "ERROR: ${SERVICE_USER} cannot execute ${SQLPLUS_BIN}" >&2
+  exit 1
+fi
 
 install -d -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0750 "${APP_DIR}/streamlit-ui"
 install -d -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0750 "${APP_DIR}/streamlit-ui/.streamlit"
+install -d -o root -g "${SERVICE_GROUP}" -m 0750 "${APP_DIR}/sql_scripts"
 install -d -o root -g "${SERVICE_GROUP}" -m 0750 /etc/focus-loader
 
 install -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0640 \
@@ -51,6 +62,30 @@ install -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0640 \
 install -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0640 \
   "${SOURCE_DIR}/streamlit-ui/.streamlit/config.toml" \
   "${APP_DIR}/streamlit-ui/.streamlit/config.toml"
+install -o root -g "${SERVICE_GROUP}" -m 0750 \
+  "${SOURCE_DIR}/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh" \
+  "${APP_DIR}/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh"
+if [[ ! -e "${APP_DIR}/sql_scripts/focus.conf" ]]; then
+  install -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0640 \
+    "${SOURCE_DIR}/sql_scripts/focus.conf" \
+    "${APP_DIR}/sql_scripts/focus.conf"
+else
+  chown "${SERVICE_USER}:${SERVICE_GROUP}" "${APP_DIR}/sql_scripts/focus.conf"
+  chmod 0640 "${APP_DIR}/sql_scripts/focus.conf"
+fi
+if [[ ! -e "${APP_DIR}/focus.conf" ]]; then
+  install -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0640 \
+    "${SOURCE_DIR}/sql_scripts/focus.conf" "${APP_DIR}/focus.conf"
+fi
+if ! runuser -u "${SERVICE_USER}" -- test -w "${APP_DIR}/focus.conf"; then
+  echo "ERROR: ${SERVICE_USER} must be able to update ${APP_DIR}/focus.conf" >&2
+  echo "Review its ownership and mode, then rerun this installer." >&2
+  exit 1
+fi
+if ! runuser -u "${SERVICE_USER}" -- test -w "${APP_DIR}/sql_scripts/focus.conf"; then
+  echo "ERROR: ${SERVICE_USER} must be able to update ${APP_DIR}/sql_scripts/focus.conf" >&2
+  exit 1
+fi
 
 "${PYTHON_BIN}" -m venv "${APP_DIR}/streamlit-ui/.venv"
 "${APP_DIR}/streamlit-ui/.venv/bin/python" -m pip install --no-cache-dir --upgrade pip
@@ -58,7 +93,10 @@ install -o "${SERVICE_USER}" -g "${SERVICE_GROUP}" -m 0640 \
   -r "${APP_DIR}/streamlit-ui/requirements.txt"
 chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${APP_DIR}/streamlit-ui/.venv"
 
-printf 'TNS_ADMIN=%s\n' "${TNS_ADMIN}" > /etc/focus-loader/tns-gui.env
+SQLPLUS_DIR=$(cd -- "$(dirname -- "${SQLPLUS_BIN}")" && pwd)
+printf 'TNS_ADMIN=%s\nFOCUS_SQL_SCRIPTS_DIR=%s\nPATH=%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin\n' \
+  "${TNS_ADMIN}" "${APP_DIR}/sql_scripts" "${SQLPLUS_DIR}" \
+  > /etc/focus-loader/tns-gui.env
 chown root:"${SERVICE_GROUP}" /etc/focus-loader/tns-gui.env
 chmod 0640 /etc/focus-loader/tns-gui.env
 

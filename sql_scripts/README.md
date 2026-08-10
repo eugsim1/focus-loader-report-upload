@@ -32,6 +32,16 @@ the parent destination.
 Do not pass passwords as command-line arguments because they can appear in the
 process list and shell history.
 
+The Streamlit deployment workflow runs only
+`deploy_focus_schema_with_sqlloader_audit.sh` from the installed `sql_scripts`
+directory. It sends both passwords through an anonymous inherited file
+descriptor rather than command arguments or process-environment values, sets
+`FOCUS_IGNORE_DOTENV=true` so a local `.env` cannot override submitted values,
+and closes/unsets the credential channel before starting SQL*Plus. The
+administrator password is reused through a
+short-lived one-use backend authorization; the target-schema password is reused
+only to verify and list the created schema's tables.
+
 ## Deploy the schema
 
 ```bash

@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseFirstTNSAlias(t *testing.T) {
@@ -243,8 +245,120 @@ func TestTNSGUIDatabaseTablesAPIUsesFirstAlias(t *testing.T) {
 	if payload.ConnectAlias != "FIRST_SERVICE" || payload.TableCount != 2 || len(payload.Tables) != 2 {
 		t.Fatalf("unexpected payload: %#v", payload)
 	}
+	if payload.DeploymentToken == "" || payload.DeploymentTokenExpiresAtUTC == "" {
+		t.Fatalf("deployment authorization was not returned: %#v", payload)
+	}
 	if strings.Contains(response.Body.String(), "test-secret") {
 		t.Fatal("response contains the database password")
+	}
+}
+
+func TestTNSGUISchemaDeploymentRequiresSuccessfulLoginAndUsesCreatedSchemaPassword(t *testing.T) {
+	tnsAdmin := t.TempDir()
+	scriptDirectory := t.TempDir()
+	path := filepath.Join(tnsAdmin, tnsNamesFileName)
+	if err := os.WriteFile(path, []byte("FIRST_SERVICE = (DESCRIPTION = (ADDRESS = TCP))\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var runnerInput schemaDeploymentInput
+	runnerCalls := 0
+	runner := func(_ context.Context, input schemaDeploymentInput) (schemaDeploymentExecution, error) {
+		runnerCalls++
+		runnerInput = input
+		started := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+		return schemaDeploymentExecution{
+			Output:        "admin=admin-secret target=target-secret deployment complete",
+			ExitCode:      0,
+			StartedAtUTC:  started,
+			FinishedAtUTC: started.Add(10 * time.Second),
+		}, nil
+	}
+
+	listerCalls := 0
+	lister := func(
+		_ context.Context,
+		username string,
+		password string,
+		alias string,
+		schema string,
+	) ([]databaseTableInfo, error) {
+		listerCalls++
+		if listerCalls == 1 {
+			if username != "ADMIN" || password != "admin-secret" || alias != "FIRST_SERVICE" {
+				t.Fatalf("unexpected login lookup: user=%q password=%q alias=%q", username, password, alias)
+			}
+			return []databaseTableInfo{}, nil
+		}
+		if username != "FOCUS_APP" || password != "target-secret" || alias != "FIRST_SERVICE" || schema != "FOCUS_APP" {
+			t.Fatalf("unexpected created-schema lookup: user=%q password=%q alias=%q schema=%q", username, password, alias, schema)
+		}
+		return []databaseTableInfo{
+			{Owner: "FOCUS_APP", TableName: "SQLLOADER_AUDIT"},
+			{Owner: "FOCUS_APP", TableName: "TEMP_OCI_FOCUS"},
+		}, nil
+	}
+
+	handler := newTNSGUIHandlerWithServices(func(name string) string {
+		switch name {
+		case "TNS_ADMIN":
+			return tnsAdmin
+		case "FOCUS_SQL_SCRIPTS_DIR":
+			return scriptDirectory
+		default:
+			return ""
+		}
+	}, lister, runner)
+
+	loginBody := bytes.NewBufferString(`{"username":"ADMIN","password":"admin-secret","schema":"ADMIN"}`)
+	loginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/database/tables", loginBody)
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", loginResponse.Code, loginResponse.Body.String())
+	}
+	var loginPayload databaseTablesResponse
+	if err := json.Unmarshal(loginResponse.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatal(err)
+	}
+
+	deployJSON := fmt.Sprintf(
+		`{"deploymentToken":%q,"targetSchema":"focus_app","targetSchemaPassword":"target-secret","dropExisting":false,"dropConfirmation":""}`,
+		loginPayload.DeploymentToken,
+	)
+	deployRequest := httptest.NewRequest(http.MethodPost, "/api/v1/schema/deploy", bytes.NewBufferString(deployJSON))
+	deployRequest.Header.Set("Content-Type", "application/json")
+	deployResponse := httptest.NewRecorder()
+	handler.ServeHTTP(deployResponse, deployRequest)
+	if deployResponse.Code != http.StatusOK {
+		t.Fatalf("deployment status = %d, body = %s", deployResponse.Code, deployResponse.Body.String())
+	}
+	var deployment schemaDeploymentResponse
+	if err := json.Unmarshal(deployResponse.Body.Bytes(), &deployment); err != nil {
+		t.Fatal(err)
+	}
+	if !deployment.DeploymentSucceeded || !deployment.TableLookupSucceeded || deployment.TableCount != 2 {
+		t.Fatalf("unexpected deployment response: %#v", deployment)
+	}
+	if runnerInput.AdminUsername != "ADMIN" || runnerInput.AdminPassword != "admin-secret" ||
+		runnerInput.TargetSchema != "FOCUS_APP" || runnerInput.TargetSchemaPassword != "target-secret" ||
+		runnerInput.ConnectAlias != "FIRST_SERVICE" || runnerInput.ScriptDirectory != scriptDirectory {
+		t.Fatalf("unexpected runner input: %#v", runnerInput)
+	}
+	if strings.Contains(deployResponse.Body.String(), "admin-secret") || strings.Contains(deployResponse.Body.String(), "target-secret") {
+		t.Fatalf("deployment response contains a password: %s", deployResponse.Body.String())
+	}
+	if !strings.Contains(deployResponse.Body.String(), "[REDACTED]") {
+		t.Fatalf("deployment output was not redacted: %s", deployResponse.Body.String())
+	}
+
+	replayRequest := httptest.NewRequest(http.MethodPost, "/api/v1/schema/deploy", bytes.NewBufferString(deployJSON))
+	replayRequest.Header.Set("Content-Type", "application/json")
+	replayResponse := httptest.NewRecorder()
+	handler.ServeHTTP(replayResponse, replayRequest)
+	if replayResponse.Code != http.StatusUnauthorized || runnerCalls != 1 {
+		t.Fatalf("one-use token replay status=%d runnerCalls=%d body=%s", replayResponse.Code, runnerCalls, replayResponse.Body.String())
 	}
 }
 

@@ -48,6 +48,9 @@ jobs:
         working-directory: streamlit-ui
         run: python -m compileall -q app.py focus_api.py command_builder.py tests
 
+      - name: Validate deployment shell scripts
+        run: bash -n scripts/install-streamlit-ui.sh sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
+
       - name: Validate PowerShell Windows authentication launchers
         shell: pwsh
         run: |

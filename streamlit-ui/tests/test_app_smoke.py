@@ -21,7 +21,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
         self.assertEqual(app.title[0].value, "OCI FOCUS Loader")
         self.assertGreaterEqual(len(app.error), 1)
 
-    def test_database_tables_is_first_tab(self):
+    def test_database_tables_is_first_tab_and_deployment_is_initially_locked(self):
         class BackendHandler(BaseHTTPRequestHandler):
             def do_GET(self):
                 if self.path == "/api/v1/health":
@@ -54,14 +54,24 @@ class StreamlitAppSmokeTests(unittest.TestCase):
         try:
             with patch.dict(os.environ, {"FOCUS_API_URL": api_url}):
                 app = AppTest.from_file(str(app_path), default_timeout=10).run()
+                self.assertEqual(len(app.exception), 0)
+                self.assertGreaterEqual(len(app.tabs), 4)
+                self.assertEqual(app.tabs[0].label, "Database tables")
+                self.assertNotIn("Deploy schema", [tab.label for tab in app.tabs])
+
+                app.session_state["database_deployment_token"] = "opaque-test-token"
+                app.session_state["database_deployment_token_expires_at_utc"] = (
+                    "2999-08-10T12:15:00Z"
+                )
+                app.session_state["database_admin_user"] = "ADMIN"
+                app.run()
+                self.assertEqual(len(app.exception), 0)
+                self.assertGreaterEqual(len(app.tabs), 5)
+                self.assertEqual(app.tabs[1].label, "Deploy schema")
         finally:
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
-
-        self.assertEqual(len(app.exception), 0)
-        self.assertGreaterEqual(len(app.tabs), 4)
-        self.assertEqual(app.tabs[0].label, "Database tables")
 
 
 if __name__ == "__main__":

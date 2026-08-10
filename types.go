@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.6.0-schema-browser"
+	version       = "26.7.0-schema-deployment-ui"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

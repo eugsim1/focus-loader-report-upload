@@ -57,7 +57,7 @@ func runTNSGUI(ctx context.Context, listenAddress string) error {
 		Handler:           newTNSGUIHandler(os.Getenv),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      40 * time.Second,
+		WriteTimeout:      schemaDeploymentTimeout + 30*time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
@@ -66,7 +66,7 @@ func runTNSGUI(ctx context.Context, listenAddress string) error {
 		fmt.Println("WARNING: the TNS GUI has no built-in authentication; use a firewall or reverse proxy before exposing it")
 	}
 	fmt.Printf("TNS GUI listening on http://%s\n", listener.Addr().String())
-	fmt.Println("The service reads TNS aliases and exposes a credential-once schema table lookup; it never modifies the database.")
+	fmt.Println("The service reads TNS aliases, lists schema tables, and runs the fixed schema deployment script after a successful login.")
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -101,13 +101,22 @@ func isLoopbackHost(host string) bool {
 }
 
 func newTNSGUIHandler(getenv func(string) string) http.Handler {
-	return newTNSGUIHandlerWithTableLister(getenv, listOracleSchemaTables)
+	return newTNSGUIHandlerWithServices(getenv, listOracleSchemaTables, runFocusSchemaDeployment)
 }
 
 func newTNSGUIHandlerWithTableLister(
 	getenv func(string) string,
 	lister databaseTableLister,
 ) http.Handler {
+	return newTNSGUIHandlerWithServices(getenv, lister, runFocusSchemaDeployment)
+}
+
+func newTNSGUIHandlerWithServices(
+	getenv func(string) string,
+	lister databaseTableLister,
+	runner schemaDeploymentRunner,
+) http.Handler {
+	sessions := newSchemaDeploymentSessionStore()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		setTNSGUIJSONHeaders(w)
@@ -130,7 +139,10 @@ func newTNSGUIHandlerWithTableLister(
 		_ = json.NewEncoder(w).Encode(response)
 	})
 	mux.HandleFunc("/api/v1/database/tables", func(w http.ResponseWriter, r *http.Request) {
-		handleDatabaseTables(w, r, getenv, lister)
+		handleDatabaseTables(w, r, getenv, lister, sessions)
+	})
+	mux.HandleFunc("/api/v1/schema/deploy", func(w http.ResponseWriter, r *http.Request) {
+		handleSchemaDeployment(w, r, getenv, sessions, runner, lister)
 	})
 	mux.HandleFunc("/api/tns-alias", func(w http.ResponseWriter, r *http.Request) {
 		setTNSGUIJSONHeaders(w)

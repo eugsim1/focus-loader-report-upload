@@ -1,5 +1,23 @@
 # Changelog
 
+## 26.7.0-schema-deployment-ui
+
+- Added a second Streamlit **Deploy schema** tab that appears only after a
+  successful first-tab database login and runs the fixed
+  `sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh` server-side script.
+- Added 15-minute, random, one-use deployment authorization tokens so Streamlit
+  never stores the administrator password, plus masked target-schema password
+  inputs, destructive-drop confirmation, password/output redaction, a bounded
+  script runtime, and single-deployment concurrency control.
+- Reconnect as the created schema with its submitted password after deployment,
+  then show and export all resulting tables together with the script exit code,
+  timestamps, and console output.
+- Updated the Oracle Linux installer and systemd configuration to install the
+  fixed script/config, locate SQL*Plus, restrict browser-controlled parameters,
+  and grant write access only to the two synchronized `focus.conf` files.
+- Expanded Go, Python, installation, API, Bastion, security, and troubleshooting
+  coverage for the authenticated deployment workflow.
+
 ## 26.6.0-schema-browser
 
 - Added a first Streamlit **Database tables** tab that uses the first TNS alias,

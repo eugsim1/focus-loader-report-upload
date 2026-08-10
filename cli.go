@@ -122,7 +122,7 @@ func printUsage() {
 	fmt.Println("  -load-after-upload Run SQL*Loader immediately after each transformed CSV upload succeeds")
 	fmt.Println("  -verbose      Print detailed per-file pre-load progress")
 	fmt.Println("  -skip-preload-content-scan Metadata-only pre-load report; no object download, gzip decompression, or CSV row count")
-	fmt.Println("  -tns-gui      Start the local TNS and credential-once database-metadata interface")
+	fmt.Println("  -tns-gui      Start the local TNS, database-metadata, and gated schema-deployment API")
 	fmt.Println("  -tns-gui-listen string TNS GUI listen address (default 127.0.0.1:8080)")
 	fmt.Println("  -version      Show version")
 }

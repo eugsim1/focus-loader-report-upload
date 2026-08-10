@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import io
 import os
+import re
+from datetime import datetime, timezone
 
 import streamlit as st
 
@@ -14,13 +16,23 @@ from command_builder import (
     build_loader_command,
     build_shell_script,
 )
-from focus_api import AliasCatalog, DatabaseTables, FocusAPIClient, FocusAPIError, Health
+from focus_api import (
+    AliasCatalog,
+    DatabaseTable,
+    DatabaseTables,
+    FocusAPIClient,
+    FocusAPIError,
+    Health,
+    SchemaDeployment,
+)
 
 
 DEFAULT_API_URL = os.getenv("FOCUS_API_URL", "http://127.0.0.1:8080")
 DEFAULT_EXECUTABLE = os.getenv(
     "FOCUS_LOADER_EXECUTABLE", "/opt/focus-loader/focus-loader-report-upload"
 )
+ORACLE_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]{0,127}$")
+PROTECTED_DEPLOYMENT_SCHEMAS = {"ADMIN", "AUDSYS", "PDBADMIN", "SYS", "SYSTEM"}
 
 st.set_page_config(
     page_title="OCI FOCUS Loader",
@@ -71,13 +83,35 @@ def render_connection(health: Health, catalog: AliasCatalog) -> str:
     return selected
 
 
-def database_tables_csv(result: DatabaseTables) -> str:
+def tables_csv(tables: tuple[DatabaseTable, ...]) -> str:
     output = io.StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow(["OWNER", "TABLE_NAME"])
-    for table in result.tables:
+    for table in tables:
         writer.writerow([table.owner, table.table_name])
     return output.getvalue()
+
+
+def clear_deployment_authorization() -> None:
+    st.session_state.pop("database_deployment_token", None)
+    st.session_state.pop("database_deployment_token_expires_at_utc", None)
+    st.session_state.pop("database_admin_user", None)
+
+
+def deployment_authorization_is_active() -> bool:
+    token = st.session_state.get("database_deployment_token")
+    expires_at = st.session_state.get("database_deployment_token_expires_at_utc")
+    if not isinstance(token, str) or not token or not isinstance(expires_at, str):
+        return False
+    try:
+        expiration = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+    except ValueError:
+        clear_deployment_authorization()
+        return False
+    if expiration.tzinfo is None or expiration <= datetime.now(timezone.utc):
+        clear_deployment_authorization()
+        return False
+    return True
 
 
 def render_database_tables(api_url: str, catalog: AliasCatalog) -> None:
@@ -125,6 +159,8 @@ def render_database_tables(api_url: str, catalog: AliasCatalog) -> None:
     if submitted:
         st.session_state.pop("database_tables_result", None)
         st.session_state.pop("database_tables_error", None)
+        st.session_state.pop("schema_deployment_result", None)
+        clear_deployment_authorization()
         if not database_user:
             st.session_state["database_tables_error"] = "Database user is required."
         elif not schema_owner:
@@ -140,6 +176,12 @@ def render_database_tables(api_url: str, catalog: AliasCatalog) -> None:
                         schema_owner,
                     )
                 st.session_state["database_tables_result"] = result
+                st.session_state["database_deployment_token"] = result.deployment_token
+                st.session_state["database_deployment_token_expires_at_utc"] = (
+                    result.deployment_token_expires_at_utc
+                )
+                st.session_state["database_admin_user"] = result.username
+                st.rerun()
             except FocusAPIError as error:
                 st.session_state["database_tables_error"] = str(error)
 
@@ -162,19 +204,174 @@ def render_database_tables(api_url: str, catalog: AliasCatalog) -> None:
         )
         st.download_button(
             "Download table list as CSV",
-            data=database_tables_csv(result),
+            data=tables_csv(result.tables),
             file_name=f"{result.schema.lower()}-tables.csv",
             mime="text/csv",
         )
         if st.button("Clear database result"):
             st.session_state.pop("database_tables_result", None)
             st.session_state.pop("database_tables_error", None)
+            st.session_state.pop("schema_deployment_result", None)
+            clear_deployment_authorization()
             st.rerun()
 
     st.caption(
         "The backend opens one connection for this request and closes it after "
         "the metadata query. The password field clears after submission."
     )
+
+
+def render_schema_deployment(api_url: str, catalog: AliasCatalog) -> None:
+    st.subheader("Deploy FOCUS schema")
+    st.caption(
+        "Runs the fixed sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh "
+        "file on the Linux server. TNS_ADMIN and the first TNS alias are loaded "
+        "by the Go backend and cannot be overridden in the browser."
+    )
+
+    result = st.session_state.get("schema_deployment_result")
+    authorization_active = deployment_authorization_is_active()
+    if authorization_active:
+        st.success(
+            "Administrator login verified. This one-use deployment authorization "
+            "expires at "
+            f"{st.session_state['database_deployment_token_expires_at_utc']}."
+        )
+        with st.form("schema-deployment", clear_on_submit=True):
+            st.text_input(
+                "Administrator user",
+                value=st.session_state.get("database_admin_user", ""),
+                disabled=True,
+            )
+            st.text_input("TNS alias", value=catalog.first_alias, disabled=True)
+            st.text_input(
+                "Deployment script",
+                value="sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh",
+                disabled=True,
+            )
+            target_schema = st.text_input(
+                "Target schema",
+                value="FOCUS_APP",
+                help="Use an unquoted Oracle schema name.",
+            ).strip().upper()
+            target_password = st.text_input(
+                "Target schema password",
+                type="password",
+                help=(
+                    "Used by the deployment script and then immediately reused to "
+                    "connect as the created schema and list its tables."
+                ),
+            )
+            confirm_password = st.text_input(
+                "Confirm target schema password",
+                type="password",
+            )
+            drop_existing = st.checkbox(
+                "Drop the existing target schema and all its objects",
+                value=False,
+                help="Leave disabled to retain an existing schema and update its password.",
+            )
+            drop_confirmation = st.text_input(
+                "Destructive-action confirmation",
+                placeholder="Enter DROP FOCUS_APP only when drop-existing is enabled",
+                help="Required only when the drop-existing option is selected.",
+            ).strip()
+            submitted = st.form_submit_button("Run schema deployment", type="primary")
+
+        if submitted:
+            validation_error = ""
+            if not target_schema:
+                validation_error = "Target schema is required."
+            elif not ORACLE_IDENTIFIER.fullmatch(target_schema):
+                validation_error = "Target schema must be an unquoted Oracle identifier."
+            elif target_schema in PROTECTED_DEPLOYMENT_SCHEMAS:
+                validation_error = "That protected database schema cannot be deployed here."
+            elif target_schema == str(
+                st.session_state.get("database_admin_user", "")
+            ).upper():
+                validation_error = "Target schema cannot be the administrator login user."
+            elif not target_password:
+                validation_error = "Target schema password is required."
+            elif target_password != confirm_password:
+                validation_error = "The target schema passwords do not match."
+            elif drop_existing and drop_confirmation != f"DROP {target_schema}":
+                validation_error = f"Enter DROP {target_schema} to confirm schema deletion."
+
+            if validation_error:
+                st.error(validation_error)
+            else:
+                deployment_token = st.session_state["database_deployment_token"]
+                try:
+                    with st.spinner(
+                        f"Running {target_schema} deployment through {catalog.first_alias}..."
+                    ):
+                        result = FocusAPIClient(
+                            api_url, timeout_seconds=630.0
+                        ).deploy_schema(
+                            deployment_token,
+                            target_schema,
+                            target_password,
+                            drop_existing,
+                            drop_confirmation,
+                        )
+                    st.session_state["schema_deployment_result"] = result
+                except FocusAPIError as error:
+                    st.error(str(error))
+                finally:
+                    clear_deployment_authorization()
+    elif not isinstance(result, SchemaDeployment):
+        st.info(
+            "Connect successfully in the Database tables tab first. The deployment "
+            "tab is unlocked by a short-lived, one-use authorization."
+        )
+
+    result = st.session_state.get("schema_deployment_result")
+    if not isinstance(result, SchemaDeployment):
+        return
+
+    if result.deployment_succeeded and result.table_lookup_succeeded:
+        st.success(
+            f"Schema {result.schema} was deployed and verified through "
+            f"{result.connect_alias}. Found {len(result.tables)} table(s)."
+        )
+    elif result.deployment_succeeded:
+        st.warning(result.error or "The schema deployed, but table verification failed.")
+    else:
+        st.error(result.error or "The schema deployment failed.")
+
+    metric1, metric2, metric3 = st.columns(3)
+    metric1.metric("Exit code", result.exit_code)
+    metric2.metric("Deployment", "SUCCESS" if result.deployment_succeeded else "FAILED")
+    metric3.metric("Created-schema tables", len(result.tables))
+    st.caption(
+        f"Script: {result.script_name} | Started: {result.started_at_utc} | "
+        f"Finished: {result.finished_at_utc}"
+    )
+    st.text_area(
+        "Deployment output",
+        value=result.output or "(the script returned no console output)",
+        height=320,
+        disabled=True,
+    )
+    if result.tables:
+        st.dataframe(
+            [
+                {"Position": index, "Owner": table.owner, "Table": table.table_name}
+                for index, table in enumerate(result.tables, start=1)
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.download_button(
+            "Download created-schema table list as CSV",
+            data=tables_csv(result.tables),
+            file_name=f"{result.schema.lower()}-deployed-tables.csv",
+            mime="text/csv",
+        )
+    st.info("Authenticate again in the first tab before running another deployment.")
+    if st.button("Clear deployment result"):
+        st.session_state.pop("schema_deployment_result", None)
+        st.rerun()
 
 
 def render_command_builder(selected_alias: str) -> None:
@@ -321,16 +518,30 @@ def main() -> None:
         )
         st.stop()
 
-    database_tab, connection_tab, builder_tab, diagnostics_tab = st.tabs(
-        ["Database tables", "Connection", "Command builder", "Diagnostics"]
+    show_deployment_tab = deployment_authorization_is_active() or isinstance(
+        st.session_state.get("schema_deployment_result"), SchemaDeployment
     )
-    with database_tab:
+    tab_labels = ["Database tables"]
+    if show_deployment_tab:
+        tab_labels.append("Deploy schema")
+    tab_labels.extend(["Connection", "Command builder", "Diagnostics"])
+    tabs = st.tabs(tab_labels)
+
+    tab_index = 0
+    with tabs[tab_index]:
         render_database_tables(api_url, catalog)
-    with connection_tab:
+    tab_index += 1
+    if show_deployment_tab:
+        with tabs[tab_index]:
+            render_schema_deployment(api_url, catalog)
+        tab_index += 1
+    with tabs[tab_index]:
         selected_alias = render_connection(health, catalog)
-    with builder_tab:
+    tab_index += 1
+    with tabs[tab_index]:
         render_command_builder(selected_alias)
-    with diagnostics_tab:
+    tab_index += 1
+    with tabs[tab_index]:
         render_diagnostics(api_url, health, catalog)
 
 

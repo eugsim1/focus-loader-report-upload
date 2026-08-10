@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.6.0-schema-browser`
+Version `26.7.0-schema-deployment-ui`
 
 > **Independent project disclaimer**
 >
@@ -13,7 +13,7 @@ This Go application retrieves OCI FOCUS cost reports from Object Storage, transf
 - upload each transformed CSV and then load it;
 - generate pre-load detail, summary, and capacity-planning reports;
 - display the first `$TNS_ADMIN/tnsnames.ora` alias in a lightweight, read-only browser interface;
-- provide an optional modular Streamlit interface for first-alias database table discovery, alias selection, diagnostics, and validated command generation;
+- provide an optional modular Streamlit interface for first-alias database table discovery, gated fixed-script schema deployment, alias selection, diagnostics, and validated command generation;
 - run incrementally from cron with durable load and upload checkpoints.
 
 An [Ansible project](ansible/README.md) is included to build the Linux binary,
@@ -22,7 +22,7 @@ variable-driven settings and protected secrets.
 
 The source prefix is `FOCUS Reports/`. Destination object names preserve the source path and remove only the final `.gz` suffix.
 
-> Important: loader, upload-only, and pre-load modes connect to Oracle Database. Starting `-tns-gui` requires neither database nor OCI credentials. Its alias endpoints read only `$TNS_ADMIN/tnsnames.ora`; the optional schema-table endpoint connects only when a user submits database credentials for that single request.
+> Important: loader, upload-only, and pre-load modes connect to Oracle Database. Starting `-tns-gui` requires neither database nor OCI credentials. Its alias endpoints read only `$TNS_ADMIN/tnsnames.ora`; a successful submitted database login can create one short-lived authorization for the fixed schema-deployment script.
 
 ## Goal of this utility
 
@@ -105,23 +105,28 @@ Current interactions include:
 - a first Database tables tab that uses the first TNS alias, accepts `ADMIN` or
   another Oracle user through a masked password form, and lists an accessible
   schema's tables;
+- a gated second Deploy schema tab that runs the fixed
+  `sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh`, displays redacted
+  output, and lists the created schema's tables using its submitted password;
 - display and selection of every alias in `$TNS_ADMIN/tnsnames.ora`;
 - diagnostic API output without connect descriptors or wallet content;
 - a validated command builder covering all four loader processing modes;
 - POSIX-safe command preview and reviewed shell-script download.
 
 The command-builder tab deliberately does not execute generated commands and
-never asks for a database password. The separate Database tables tab sends a
-masked, submission-only password to the loopback Go API, which runs a fixed
-bind-variable `ALL_TABLES` query and immediately closes the connection. No SQL
-file is required. Both services bind to loopback by default and are reached
-through SSH/OCI Bastion or an authenticated TLS reverse proxy.
+never asks for a database password. A successful first-tab login creates a
+random, 15-minute, one-use token; Streamlit stores that opaque token instead of
+the administrator password. The second tab can execute only the installed fixed
+deployment script, with server-controlled TNS and configuration paths. Both
+services bind to loopback by default and are reached through SSH/OCI Bastion or
+an authenticated TLS reverse proxy.
 
-Quick deployment after installing the `26.6.0-schema-browser` Go binary:
+Quick deployment after installing the `26.7.0-schema-deployment-ui` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip
 sudo TNS_ADMIN=/opt/oracle/wallet PYTHON_BIN=python3.11 \
+  SQLPLUS_BIN=/usr/lib/oracle/23/client64/bin/sqlplus \
   ./scripts/install-streamlit-ui.sh
 ./scripts/test-streamlit-ui.sh
 ```
@@ -558,7 +563,7 @@ All relative paths are resolved from the process working directory. The supplied
 | `-workers` | Integer, default `1` | Number of files processed concurrently. Must be at least 1 and is capped internally to the number of pending objects. More workers increase OCI requests, local disk usage, memory, Oracle sessions, and SQL*Loader pressure. Start with 1–4 and measure. |
 | `-verbose` | Boolean, default `false` | Prints detailed per-file pre-load inspection and transformed-upload progress. Without it, upload progress is printed periodically and at completion. Useful for diagnosis but can create large cron logs. |
 | `-keep-work-files` | Boolean, default `false` | Retains downloaded gzip files and generated CSV/control artifacts after successful processing. Normally successful work files are removed. Failure artifacts may remain even without this flag so they can be investigated. Plan disk capacity before enabling it. |
-| `-tns-gui` | Boolean, default `false` | Starts the local TNS alias and database-metadata interface and exits before normal loader database/OCI validation. The alias page reads `$TNS_ADMIN/tnsnames.ora`; the table endpoint uses submitted credentials only for one read-only metadata request. |
+| `-tns-gui` | Boolean, default `false` | Starts the loopback TNS, database-metadata, and fixed-script schema-deployment API and exits before normal loader database/OCI validation. A successful table lookup creates a short-lived, one-use deployment authorization; the deployment endpoint remains unavailable without it. |
 | `-tns-gui-listen` | String, default `127.0.0.1:8080` | Listener used with `-tns-gui`. Keep the loopback default and reach it through SSH; a non-loopback listener has no built-in authentication. |
 
 ### OCI authentication, source location, and networking
@@ -642,7 +647,7 @@ Checkpoint files are target state, not disposable cache. Back them up and never 
 - `-skip-tags` implies both `-skip-tag-rows` and `-skip-tag-keys`.
 - `-skip-preload-content-scan` automatically enables `-preload-report` only when upload mode is not enabled.
 - `-workers` must be at least 1.
-- Database credentials are validated before OCI discovery in all data-processing modes. `-tns-gui` startup and alias browsing bypass both validations; its optional table lookup validates only the credentials submitted for that request.
+- Database credentials are validated before OCI discovery in all data-processing modes. `-tns-gui` startup and alias browsing bypass both validations. Its table lookup validates submitted credentials; only a successful lookup can authorize one fixed schema-deployment request.
 - `-force` overrides processed-file filtering but does not disable exact `-f` or minimum-date `-d` filtering.
 
 Run `./focus-loader-report-upload -h` after every upgrade; the executable's help output is the authoritative parser-level option list.
@@ -673,8 +678,8 @@ ssh -N -L 8080:127.0.0.1:8080 opc@SERVER_IP
 ```
 
 No `-du`, `-dn`, password, secret, or OCI authentication flag is required to
-start the service or view aliases. The optional Streamlit table browser prompts
-for database credentials only when requested.
+start the service or view aliases. Streamlit prompts for credentials only for a
+table lookup or the gated fixed-script deployment workflow.
 See [README_TNS_GUI.md](README_TNS_GUI.md) for Oracle Linux 8 systemd setup,
 security guidance, Bastion access, API output, and troubleshooting.
 
@@ -958,7 +963,8 @@ The program returns an error to avoid silently losing incremental state. Fix per
 - Back up persistent checkpoint files and monitor cron exit status.
 - Review all scripts and policies for your tenancy before deployment.
 - Keep the Go API and Streamlit listeners on loopback; use SSH/OCI Bastion or an authenticated TLS reverse proxy.
-- Keep Streamlit and its Go API on loopback. The table browser may receive a masked, submission-only database password for one fixed metadata query; never log or persist it, and never allow the UI to execute arbitrary SQL or loader commands.
+- The Go process may retain verified administrator credentials in memory for at most 15 minutes behind a random one-use deployment token; it never returns or logs the password, and Streamlit stores only the token.
+- The deployment UI accepts no shell command, script path, SQL text, TNS path, alias, or config path. It can run only the installed `deploy_focus_schema_with_sqlloader_audit.sh`; keep `DROP_EXISTING=false` unless an approved replacement explicitly requires `DROP USER ... CASCADE`.
 
 ## Publish to GitHub
 

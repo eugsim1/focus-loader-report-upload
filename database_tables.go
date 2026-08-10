@@ -31,12 +31,14 @@ type databaseTableInfo struct {
 }
 
 type databaseTablesResponse struct {
-	ConnectAlias string              `json:"connectAlias"`
-	Username     string              `json:"username"`
-	Schema       string              `json:"schema"`
-	TableCount   int                 `json:"tableCount"`
-	Tables       []databaseTableInfo `json:"tables"`
-	Error        string              `json:"error,omitempty"`
+	ConnectAlias                string              `json:"connectAlias"`
+	Username                    string              `json:"username"`
+	Schema                      string              `json:"schema"`
+	TableCount                  int                 `json:"tableCount"`
+	Tables                      []databaseTableInfo `json:"tables"`
+	DeploymentToken             string              `json:"deploymentToken,omitempty"`
+	DeploymentTokenExpiresAtUTC string              `json:"deploymentTokenExpiresAtUtc,omitempty"`
+	Error                       string              `json:"error,omitempty"`
 }
 
 type databaseTableLister func(
@@ -52,6 +54,7 @@ func handleDatabaseTables(
 	r *http.Request,
 	getenv func(string) string,
 	lister databaseTableLister,
+	sessions *schemaDeploymentSessionStore,
 ) {
 	setTNSGUIJSONHeaders(w)
 	if r.Method != http.MethodPost {
@@ -97,7 +100,7 @@ func handleDatabaseTables(
 		writeDatabaseTablesValidationError(w, "database password is required")
 		return
 	}
-	if len(request.Password) > 4096 || strings.ContainsRune(request.Password, '\x00') {
+	if !validDatabasePassword(request.Password) {
 		writeDatabaseTablesValidationError(w, "database password is invalid")
 		return
 	}
@@ -136,12 +139,20 @@ func handleDatabaseTables(
 	if tables == nil {
 		tables = []databaseTableInfo{}
 	}
+	deploymentToken, expiresAt, err := sessions.issue(request.Username, request.Password)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(databaseTablesResponse{Error: "could not create a schema deployment session"})
+		return
+	}
 	_ = json.NewEncoder(w).Encode(databaseTablesResponse{
-		ConnectAlias: aliases.FirstAlias,
-		Username:     request.Username,
-		Schema:       request.Schema,
-		TableCount:   len(tables),
-		Tables:       tables,
+		ConnectAlias:                aliases.FirstAlias,
+		Username:                    request.Username,
+		Schema:                      request.Schema,
+		TableCount:                  len(tables),
+		Tables:                      tables,
+		DeploymentToken:             deploymentToken,
+		DeploymentTokenExpiresAtUTC: expiresAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -155,6 +166,10 @@ func redactDatabasePassword(message, password string) string {
 		return message
 	}
 	return strings.ReplaceAll(message, password, "[REDACTED]")
+}
+
+func validDatabasePassword(password string) bool {
+	return password != "" && len(password) <= 4096 && !strings.ContainsAny(password, "\x00\r\n")
 }
 
 func listOracleSchemaTables(

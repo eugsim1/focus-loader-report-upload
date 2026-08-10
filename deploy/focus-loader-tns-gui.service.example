@@ -1,5 +1,5 @@
 [Unit]
-Description=FOCUS Loader TNS alias and database metadata API
+Description=FOCUS Loader TNS, database metadata, and schema deployment API
 After=network.target
 
 [Service]
@@ -13,7 +13,7 @@ Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
+ProtectSystem=strict
 ProtectHome=read-only
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -22,6 +22,7 @@ RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 UMask=0077
+ReadWritePaths=/opt/focus-loader/focus.conf /opt/focus-loader/sql_scripts/focus.conf
 
 [Install]
 WantedBy=multi-user.target

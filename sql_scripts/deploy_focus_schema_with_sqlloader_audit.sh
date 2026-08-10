@@ -3,7 +3,11 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-[[ -f "$script_dir/.env" ]] && { set -a; source "$script_dir/.env"; set +a; }
+if [[ "${FOCUS_IGNORE_DOTENV:-false}" != "true" && -f "$script_dir/.env" ]]; then
+  set -a
+  source "$script_dir/.env"
+  set +a
+fi
 
 ADMIN_USER=${DB_ADMIN_USER:-ADMIN}
 ADMIN_PASS=${DB_ADMIN_PASSWORD:-}
@@ -12,6 +16,24 @@ TARGET_SCHEMA=${TARGET_SCHEMA:-}
 TARGET_PASS=${TARGET_SCHEMA_PASSWORD:-}
 CONFIG_FILE=${FOCUS_CONFIG_FILE:-$script_dir/focus.conf}
 DROP_EXISTING=${DROP_EXISTING:-true}
+
+if [[ -n "${FOCUS_CREDENTIALS_FD:-}" ]]; then
+  credential_fd=${FOCUS_CREDENTIALS_FD}
+  if [[ "$credential_fd" != "3" ]]; then
+    echo "Invalid protected credential input descriptor"
+    exit 1
+  fi
+  if ! IFS= read -r ADMIN_PASS <&"$credential_fd" \
+    || ! IFS= read -r TARGET_PASS <&"$credential_fd"; then
+    echo "Unable to read deployment credentials from the protected input channel"
+    exit 1
+  fi
+  exec 3<&-
+fi
+
+# Passwords copied into local shell variables must not be inherited by sqlplus
+# or other child processes through the deployment process environment.
+unset DB_ADMIN_PASSWORD TARGET_SCHEMA_PASSWORD FOCUS_CREDENTIALS_FD credential_fd
 
 if [ -z "${ADMIN_USER:-}" ] || [ -z "${ADMIN_PASS:-}" ] || [ -z "${DB_CONN:-}" ] || [ -z "${TARGET_SCHEMA:-}" ] || [ -z "${TARGET_PASS:-}" ]; then
   echo "Usage:"

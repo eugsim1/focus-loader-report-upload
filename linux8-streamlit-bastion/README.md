@@ -32,6 +32,8 @@ On the Oracle Linux 8 server, ensure that:
   `/opt/focus-loader/focus-loader-report-upload`.
 - The `focusloader` account can read `tnsnames.ora` and the Oracle Net/wallet
   files required to connect, commonly `sqlnet.ora` and `cwallet.sso` for ADB.
+- Oracle SQL*Plus is installed and executable by `focusloader`, and the loader's
+  `/opt/focus-loader/focus.conf` is writable by that account for schema deploys.
 - The server can reach your approved Python package repository during setup.
 
 On the server, run:
@@ -110,6 +112,7 @@ sudo install -o focusloader -g focusloader -m 0750 \
 
 # Replace this with the directory that contains tnsnames.ora on your server.
 sudo TNS_ADMIN=/opt/oracle/wallet PYTHON_BIN=python3.11 \
+  SQLPLUS_BIN=/usr/lib/oracle/23/client64/bin/sqlplus \
   ./scripts/install-streamlit-ui.sh
 ```
 
@@ -264,6 +267,25 @@ username/password, the first alias, the selected schema owner's visibility in
 `ALL_TABLES`, Oracle client libraries, and every wallet-file permission. An
 `ORA-01017` error normally means invalid credentials; `ORA-12154`, `ORA-12514`,
 or TLS/wallet errors normally indicate Oracle Net, wallet, or network setup.
+
+The Deploy schema tab appears only after a successful first-tab login. If its
+fixed script fails, review the redacted console output and verify that
+`focusloader` can execute SQL*Plus and the installed script and can write both
+configuration files:
+
+```bash
+sudo -u focusloader bash -c \
+  'source /etc/focus-loader/tns-gui.env && command -v sqlplus && sqlplus -version'
+sudo -u focusloader test -x \
+  /opt/focus-loader/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
+sudo -u focusloader test -w /opt/focus-loader/sql_scripts/focus.conf
+sudo -u focusloader test -w /opt/focus-loader/focus.conf
+```
+
+Authenticate again for every deployment because its opaque authorization is
+valid for at most 15 minutes and can be used only once. Leave drop-existing
+disabled unless an approved change explicitly requires deleting the schema and
+all of its objects.
 
 If the managed session cannot be created, confirm the Oracle Cloud Agent and
 Bastion plugin status, the instance network route/security rules from the

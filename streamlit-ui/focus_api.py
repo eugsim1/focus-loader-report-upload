@@ -40,6 +40,25 @@ class DatabaseTables:
     username: str
     schema: str
     tables: tuple[DatabaseTable, ...]
+    deployment_token: str
+    deployment_token_expires_at_utc: str
+
+
+@dataclass(frozen=True)
+class SchemaDeployment:
+    connect_alias: str
+    admin_username: str
+    schema: str
+    script_name: str
+    drop_existing: bool
+    started_at_utc: str
+    finished_at_utc: str
+    exit_code: int
+    deployment_succeeded: bool
+    table_lookup_succeeded: bool
+    output: str
+    error: str
+    tables: tuple[DatabaseTable, ...]
 
 
 class FocusAPIClient:
@@ -120,6 +139,71 @@ class FocusAPIClient:
             username=self._required_string(payload, "username"),
             schema=self._required_string(payload, "schema"),
             tables=tuple(tables),
+            deployment_token=self._required_string(payload, "deploymentToken"),
+            deployment_token_expires_at_utc=self._required_string(
+                payload, "deploymentTokenExpiresAtUtc"
+            ),
+        )
+
+    def deploy_schema(
+        self,
+        deployment_token: str,
+        target_schema: str,
+        target_schema_password: str,
+        drop_existing: bool,
+        drop_confirmation: str,
+    ) -> SchemaDeployment:
+        payload = self._request_json(
+            "/api/v1/schema/deploy",
+            method="POST",
+            body={
+                "deploymentToken": deployment_token,
+                "targetSchema": target_schema,
+                "targetSchemaPassword": target_schema_password,
+                "dropExisting": drop_existing,
+                "dropConfirmation": drop_confirmation,
+            },
+            timeout_seconds=max(self.timeout_seconds, 630.0),
+            raise_api_error=False,
+        )
+        raw_tables = payload.get("tables")
+        if not isinstance(raw_tables, list):
+            raise FocusAPIError("The Go API returned an invalid deployed-schema table list.")
+        tables: list[DatabaseTable] = []
+        for raw_table in raw_tables:
+            if not isinstance(raw_table, dict):
+                raise FocusAPIError("The Go API returned an invalid deployed-schema table entry.")
+            tables.append(
+                DatabaseTable(
+                    owner=self._required_string(raw_table, "owner"),
+                    table_name=self._required_string(raw_table, "tableName"),
+                )
+            )
+        table_count = payload.get("tableCount")
+        if not isinstance(table_count, int) or table_count != len(tables):
+            raise FocusAPIError("The Go API returned an inconsistent deployed-schema table count.")
+
+        error = payload.get("error", "")
+        if not isinstance(error, str):
+            raise FocusAPIError("The Go API returned an invalid schema deployment error.")
+        output = payload.get("output")
+        if not isinstance(output, str):
+            raise FocusAPIError("The Go API returned invalid schema deployment output.")
+
+        return SchemaDeployment(
+            connect_alias=self._required_string(payload, "connectAlias"),
+            admin_username=self._required_string(payload, "adminUsername"),
+            schema=self._required_string(payload, "schema"),
+            script_name=self._required_string(payload, "scriptName"),
+            drop_existing=self._required_bool(payload, "dropExisting"),
+            started_at_utc=self._required_string(payload, "startedAtUtc"),
+            finished_at_utc=self._required_string(payload, "finishedAtUtc"),
+            exit_code=self._required_int(payload, "exitCode"),
+            deployment_succeeded=self._required_bool(payload, "deploymentSucceeded"),
+            table_lookup_succeeded=self._required_bool(payload, "tableLookupSucceeded"),
+            output=output,
+            error=error,
+            tables=tuple(tables),
         )
 
     def _get_json(self, path: str) -> Mapping[str, Any]:
@@ -131,6 +215,7 @@ class FocusAPIClient:
         method: str,
         body: Mapping[str, Any] | None = None,
         timeout_seconds: float | None = None,
+        raise_api_error: bool = True,
     ) -> Mapping[str, Any]:
         encoded_body = None
         headers = {"Accept": "application/json", "User-Agent": "focus-loader-streamlit-ui"}
@@ -164,7 +249,7 @@ class FocusAPIClient:
             raise FocusAPIError("The Go API returned invalid JSON.") from error
         if not isinstance(payload, dict):
             raise FocusAPIError("The Go API returned an unexpected JSON value.")
-        if isinstance(payload.get("error"), str) and payload["error"]:
+        if raise_api_error and isinstance(payload.get("error"), str) and payload["error"]:
             raise FocusAPIError(payload["error"])
         return payload
 
@@ -182,5 +267,19 @@ class FocusAPIClient:
     def _required_string(payload: Mapping[str, Any], name: str) -> str:
         value = payload.get(name)
         if not isinstance(value, str) or not value:
+            raise FocusAPIError(f"The Go API response is missing {name}.")
+        return value
+
+    @staticmethod
+    def _required_bool(payload: Mapping[str, Any], name: str) -> bool:
+        value = payload.get(name)
+        if not isinstance(value, bool):
+            raise FocusAPIError(f"The Go API response is missing {name}.")
+        return value
+
+    @staticmethod
+    def _required_int(payload: Mapping[str, Any], name: str) -> int:
+        value = payload.get(name)
+        if not isinstance(value, int) or isinstance(value, bool):
             raise FocusAPIError(f"The Go API response is missing {name}.")
         return value

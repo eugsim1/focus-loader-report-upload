@@ -10,7 +10,7 @@ desktop, X11, or another service runtime.
 For a flexible multi-form interface, this repository now also includes a
 separate [modular Streamlit frontend](streamlit-ui/README.md). The embedded page
 remains a useful low-dependency alias viewer. The same local Go service supplies
-the Streamlit TNS and database-metadata API.
+the Streamlit TNS, database-metadata, and gated fixed-script deployment API.
 
 Start it with `-tns-gui`. This mode exits before OCI and database credential
 validation, so `-du`, `-dn`, `-dp`, `-ds`, OCI configuration, and instance
@@ -104,7 +104,11 @@ is retained for compatibility.
 The `POST /api/v1/database/tables` endpoint used by Streamlit is documented in
 [`streamlit-ui/README.md`](streamlit-ui/README.md). It always uses the first
 alias and runs a fixed, read-only `ALL_TABLES` query; it does not accept SQL text
-or require an external SQL file.
+or require an external SQL file. A successful lookup also returns a short-lived,
+one-use token that can authorize `POST /api/v1/schema/deploy`. That endpoint can
+run only the server-configured
+`sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh`; it does not accept a
+browser-supplied command, script path, TNS path, alias, config path, or SQL text.
 
 Example response:
 
@@ -248,11 +252,16 @@ grep -nE '^[[:space:]]*[A-Za-z0-9_.-]+[[:space:]]*=' \
 
 - Keep the listener on loopback unless a protected reverse proxy is used.
 - Do not place wallet contents, credentials, or descriptors in browser logs.
-- Alias/page handlers accept only `GET`/`HEAD`; the database-table handler
-  accepts only a size-limited JSON `POST`. All responses use no-cache and
-  browser-hardening headers and server-side request timeouts.
-- Database passwords are held only for one table-lookup request, redacted from
-  returned errors, never logged, and never included in a response.
+- Alias/page handlers accept only `GET`/`HEAD`; database-table and deployment
+  handlers accept only size-limited JSON `POST` requests. All responses use
+  no-cache and browser-hardening headers and server-side request timeouts.
+- A verified administrator password is held only in Go process memory for at
+  most 15 minutes behind a random one-use token. Streamlit stores only the token.
+- The target-schema password is held only for the deployment request and the
+  created-schema table lookup. Both passwords are redacted from output/errors,
+  never logged, and never included in a response.
+- `dropExisting` defaults to false. The Streamlit form requires the exact
+  `DROP <SCHEMA>` confirmation before requesting destructive replacement.
 - The source path is fixed from the server-side environment; the browser cannot
   request an arbitrary file.
 - The implementation is independent software and is not affiliated with,

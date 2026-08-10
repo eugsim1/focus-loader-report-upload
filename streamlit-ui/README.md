@@ -19,6 +19,11 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
   user (default `ADMIN`), a masked password field, and an optional schema owner.
 - Read-only schema-table discovery through `POST /api/v1/database/tables` and
   CSV download of the returned owner/table names.
+- A second **Deploy schema** tab that appears only after the first tab verifies
+  the database login. It runs the fixed
+  `sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh` file, shows its
+  redacted console result, reconnects with the submitted target-schema password,
+  and lists every table in the created schema.
 - Read-only display of the first TNS alias and `tnsnames.ora` source path.
 - Interactive selection from every alias in the file.
 - Form-based loader command builder for database load, pre-load report,
@@ -32,9 +37,12 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
   installer, and a deployed-service smoke-test script.
 
 The command builder does **not** execute the generated command and still accepts
-only a Vault secret OCID for the loader's `-ds` option. The separate Database
-tables tab accepts a password only for one metadata request. Its form is masked
-and cleared on submission; the password is not logged, persisted, or returned.
+only a Vault secret OCID for the loader's `-ds` option. After a successful first-
+tab connection, the Go backend retains the administrator credentials only in
+memory behind a random, 15-minute, one-use deployment token. Streamlit stores
+only that opaque token, never the password. Both password forms are masked and
+cleared; passwords are never logged, written to a configuration file, or
+returned by the API.
 
 ## Architecture
 
@@ -43,16 +51,18 @@ flowchart LR
     Browser["Administrator browser"]
     Tunnel["SSH or OCI Bastion tunnel"]
     UI["Streamlit UI<br/>127.0.0.1:8501"]
-    API["Go TNS and metadata API<br/>127.0.0.1:8080"]
+    API["Go TNS, metadata, and deployment API<br/>127.0.0.1:8080"]
     TNS["$TNS_ADMIN/tnsnames.ora"]
     Builder["Validated command preview"]
     Loader["Existing Go loader<br/>manual execution"]
     DB["Oracle Database<br/>ALL_TABLES"]
+    Script["Fixed sql_scripts deployment file"]
     OCI["OCI and Autonomous Database"]
 
     Browser --> Tunnel --> UI
     UI --> API --> TNS
     API -->|"credential-once lookup"| DB
+    API -->|"one-use authorization"| Script --> DB
     UI --> Builder --> Loader --> OCI
 ```
 
@@ -61,8 +71,12 @@ owns Oracle Net access. Alias responses contain only aliases, source path, and
 read time. For a table lookup, Streamlit sends the submitted credentials to the
 loopback-only Go API; the Go process uses the first alias, executes a fixed
 bind-variable query against `ALL_TABLES`, returns owner/table names, and closes
-the connection. The API URL comes from server-side `FOCUS_API_URL` and cannot
-be changed by a browser user.
+the connection. A successful lookup also creates one short-lived deployment
+authorization. The deployment API loads only the server-configured script,
+passes both passwords through an anonymous inherited file descriptor instead of
+command arguments or environment values, redacts both passwords from output,
+and uses the new schema's password for the final fixed table query. The API URL comes from server-side `FOCUS_API_URL` and
+cannot be changed by a browser user.
 
 ## Directory contents
 
@@ -103,7 +117,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.6.0-schema-browser"
+  "version": "26.7.0-schema-deployment-ui"
 }
 ```
 
@@ -162,6 +176,8 @@ Example response:
   "connectAlias": "focusdb_high",
   "username": "ADMIN",
   "schema": "FOCUS_APP",
+  "deploymentToken": "opaque-one-use-value",
+  "deploymentTokenExpiresAtUtc": "2026-08-10T12:15:00Z",
   "tableCount": 2,
   "tables": [
     {"owner": "FOCUS_APP", "tableName": "LOAD_STATUS"},
@@ -169,6 +185,42 @@ Example response:
   ]
 }
 ```
+
+Treat the token as transient authentication data. It is accepted once by the
+deployment endpoint and is then removed from backend memory, whether the script
+succeeds or fails.
+
+### FOCUS schema deployment
+
+```http
+POST /api/v1/schema/deploy
+Content-Type: application/json
+```
+
+Request body:
+
+```json
+{
+  "deploymentToken": "opaque-one-use-value",
+  "targetSchema": "FOCUS_APP",
+  "targetSchemaPassword": "submitted-only-at-runtime",
+  "dropExisting": false,
+  "dropConfirmation": ""
+}
+```
+
+The backend supplies `TNS_ADMIN`, the first TNS alias, the authenticated
+administrator user/password, fixed working and parent `focus.conf` paths, and
+the fixed script path. The browser cannot select another shell script, TNS
+directory, alias, or configuration path. `dropExisting=true` requires the UI
+confirmation text `DROP <SCHEMA>`, which is also validated by the backend.
+Common administrative schemas and the authenticated login schema are rejected
+as deployment targets.
+
+The response includes the script exit code, start/finish timestamps, redacted
+combined output, deployment/table-lookup status, and the tables found by logging
+in as the created schema with the submitted target password. A script failure is
+returned as a structured result so its console output remains visible.
 
 ## Oracle Linux 8 prerequisites
 
@@ -183,6 +235,9 @@ The instructions assume:
   a real connection (commonly `sqlnet.ora` and `cwallet.sso` for an ADB wallet);
 - outbound access to the approved Python package repository is available
   during installation;
+- Oracle SQL*Plus is installed and executable by `focusloader`;
+- `/opt/focus-loader/focus.conf` exists and is writable by `focusloader` so a
+  successful schema deployment can synchronize the loader configuration;
 - `curl`, `systemd`, and OpenSSH are installed.
 
 Install Python 3.11 without replacing Oracle Linux platform Python:
@@ -197,8 +252,8 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 
 ## 1. Build and install the updated Go backend
 
-The first-tab schema browser needs the API endpoint introduced in
-`26.6.0-schema-browser`.
+The gated schema deployment tab needs the API endpoint introduced in
+`26.7.0-schema-deployment-ui`.
 
 ```bash
 cd /opt/focus-loader/src
@@ -218,7 +273,7 @@ sudo install -o focusloader -g focusloader -m 0750 \
 Expected version:
 
 ```text
-focus-loader-report-upload 26.6.0-schema-browser
+focus-loader-report-upload 26.7.0-schema-deployment-ui
 ```
 
 ## 2. Verify TNS permissions
@@ -282,8 +337,9 @@ world-readable.
 
 ## 3A. Automated installation
 
-Review the installer before running it. It copies the UI, creates an isolated
-virtual environment, installs Streamlit, installs both systemd units, and waits
+Review the installer before running it. It copies the UI and fixed deployment
+script, creates an isolated virtual environment, installs Streamlit, installs
+both systemd units, verifies SQL*Plus and configuration write access, and waits
 for the local health endpoints.
 
 ```bash
@@ -291,6 +347,7 @@ cd /opt/focus-loader/src
 less scripts/install-streamlit-ui.sh
 sudo TNS_ADMIN=/opt/oracle/wallet \
   PYTHON_BIN=python3.11 \
+  SQLPLUS_BIN=/usr/lib/oracle/23/client64/bin/sqlplus \
   ./scripts/install-streamlit-ui.sh
 ```
 
@@ -304,6 +361,7 @@ Optional installer environment variables:
 | `PYTHON_BIN` | `python3.11` | Python used to create the virtual environment. |
 | `TNS_ADMIN` | `/opt/oracle/wallet` | Directory containing `tnsnames.ora`. |
 | `FOCUS_API_URL` | `http://127.0.0.1:8080` | Server-side Go API URL. |
+| `SQLPLUS_BIN` | First `sqlplus` in root's `PATH` | Absolute SQL*Plus executable used to build the service `PATH`. |
 
 The installer does not build or replace the Go executable. Complete step 1
 first.
@@ -318,6 +376,8 @@ sudo install -d -o focusloader -g focusloader -m 0750 \
   /opt/focus-loader/streamlit-ui
 sudo install -d -o focusloader -g focusloader -m 0750 \
   /opt/focus-loader/streamlit-ui/.streamlit
+sudo install -d -o root -g focusloader -m 0750 \
+  /opt/focus-loader/sql_scripts
 
 sudo install -o focusloader -g focusloader -m 0640 \
   streamlit-ui/app.py \
@@ -328,6 +388,12 @@ sudo install -o focusloader -g focusloader -m 0640 \
 sudo install -o focusloader -g focusloader -m 0640 \
   streamlit-ui/.streamlit/config.toml \
   /opt/focus-loader/streamlit-ui/.streamlit/config.toml
+sudo install -o root -g focusloader -m 0750 \
+  sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh \
+  /opt/focus-loader/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
+sudo install -o focusloader -g focusloader -m 0640 \
+  sql_scripts/focus.conf /opt/focus-loader/sql_scripts/focus.conf
+sudo -u focusloader test -w /opt/focus-loader/focus.conf
 ```
 
 Create the virtual environment and install only the declared runtime packages:
@@ -433,6 +499,23 @@ balancer; see its [HTTPS guidance](https://docs.streamlit.io/develop/concepts/co
 
 This tab does not accept SQL text and does not need a `.sql` file.
 
+### Deploy schema tab (second tab after successful login)
+
+1. Successfully connect in **Database tables**. The second tab then appears.
+2. Confirm the loaded administrator user, first alias, and fixed script name.
+3. Enter the target schema and its password twice.
+4. Leave **Drop the existing target schema** disabled to preserve an existing
+   user. The deployment DDL is not idempotent, so an existing set of tables can
+   still cause the script to fail.
+5. To replace a schema, enable the destructive option and enter
+   `DROP <SCHEMA>` exactly. This runs `DROP USER ... CASCADE`.
+6. Select **Run schema deployment** and wait for the console result.
+7. Review the exit code, redacted output, and table list obtained by connecting
+   as the target schema with the same target password.
+
+The authorization is one-use. Authenticate in the first tab again before each
+additional deployment. Closing/restarting the Go service also invalidates it.
+
 ### Connection tab
 
 1. Confirm that backend status is `OK`.
@@ -505,8 +588,8 @@ curl -v http://127.0.0.1:8080/api/v1/health
 sudo grep '^FOCUS_API_URL=' /etc/focus-loader/streamlit.env
 ```
 
-An older binary does not have `/api/v1/database/tables`; install the
-`26.6.0-schema-browser` binary before using the first tab.
+An older binary does not have `/api/v1/schema/deploy`; install the
+`26.7.0-schema-deployment-ui` binary before using the second tab.
 
 ### The alias endpoint returns an error
 
@@ -541,6 +624,26 @@ sudo -u focusloader test -r /home/oracle/adb_wallet/cwallet.sso
 `ORA-12154`, `ORA-12514`, or wallet/TLS errors normally indicate alias, Oracle
 Net, wallet-file, or network configuration problems. The schema owner must be
 visible to the login user through `ALL_TABLES`.
+
+### Schema deployment fails or the second tab does not appear
+
+The tab appears only after a successful first-tab login. Check the backend
+version, fixed script, SQL*Plus, configuration permissions, and service settings:
+
+```bash
+/opt/focus-loader/focus-loader-report-upload -version
+sudo -u focusloader test -x \
+  /opt/focus-loader/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
+sudo -u focusloader test -w /opt/focus-loader/sql_scripts/focus.conf
+sudo -u focusloader test -w /opt/focus-loader/focus.conf
+sudo -u focusloader bash -c \
+  'source /etc/focus-loader/tns-gui.env && command -v sqlplus && sqlplus -version'
+sudo journalctl -u focus-loader-tns-gui.service -n 200 --no-pager
+```
+
+An HTTP `401` means the one-use token expired, was already consumed, or the Go
+service restarted; authenticate again. HTTP `409` means another deployment is
+running. A nonzero script exit code is displayed with its redacted output.
 
 ### Port already in use
 
@@ -592,11 +695,23 @@ directory to roll back application code.
 - The browser cannot override the backend URL.
 - Streamlit does not read the wallet or TNS file.
 - The API does not return connect descriptors or wallet contents.
-- The Database tables form masks and clears its password after submission.
-- The loopback API holds the password only for one request, redacts it from
-  returned errors, never logs it, and closes the database connection.
+- Both credential forms mask and clear their passwords after submission.
+- The administrator password is retained only in Go process memory for at most
+  15 minutes behind a random one-use token. Streamlit stores only the token.
+- The target password exists only for the deployment request and created-schema
+  verification. Passwords reach the script through an anonymous inherited file
+  descriptor, are not placed in its command arguments/environment, and are
+  redacted from returned errors/output.
 - The metadata query is fixed in the Go binary and binds the schema value; no
   browser-supplied SQL is accepted.
+- The only executable deployment target is the server-configured
+  `deploy_focus_schema_with_sqlloader_audit.sh`; browser users cannot supply a
+  command, script path, TNS path, alias, or config path.
+- The installer makes the script and its directory root-owned. The hardened Go
+  service receives write access only to the installed working and parent
+  `focus.conf` files.
+- `dropExisting` defaults to false and destructive replacement requires explicit
+  UI confirmation. Use database auditing/change controls for production runs.
 - The command builder remains separate and never requests a database password.
 - The UI generates but never executes loader commands.
 - Shell arguments are represented as an argument list and POSIX-quoted.
