@@ -102,6 +102,7 @@ chart, and future dashboard work outside the loader binary.
 Current interactions include:
 
 - backend health and version checks;
+- a sidebar choice between isolated `focusloader` and `oracle` Go backends;
 - a first Database tables tab that uses the first TNS alias, accepts `ADMIN` or
   another Oracle user through a masked password form, and lists an accessible
   schema's tables;
@@ -128,9 +129,11 @@ cannot supply an executable path or shell command.
 A successful first-tab login creates a
 random, 15-minute, one-use token; Streamlit stores that opaque token instead of
 the administrator password. The second tab can execute only the installed fixed
-deployment script, with server-controlled TNS and configuration paths. Both
-services bind to loopback by default and are reached through SSH/OCI Bastion or
-an authenticated TLS reverse proxy.
+deployment script, with server-controlled TNS and configuration paths. The
+installer securely copies `/home/oracle/.oci` to `/home/focusloader/.oci`,
+rewrites copied key/token paths, and provisions separate loopback services. All
+services are reached through SSH/OCI Bastion or an authenticated TLS reverse
+proxy.
 
 Quick deployment after installing the `26.9.0-loader-execution-ui` Go binary:
 
@@ -161,7 +164,8 @@ deployment, systemd, API, upgrade, rollback, and troubleshooting steps are in
 [`linux8-streamlit-bastion/README.md`](linux8-streamlit-bastion/README.md) and
 [`streamlit-ui/README.md`](streamlit-ui/README.md).
 
-Both installation guides include a least-privilege ACL procedure for the case
+Both installation guides include secure OCI-profile copying and a
+least-privilege ACL procedure for the case
 where `TNS_ADMIN=/home/oracle/adb_wallet` remains owned by `oracle` while the
 local alias/database-metadata service runs as `focusloader`. Database table
 lookup also requires explicit read access to the necessary Oracle Net wallet

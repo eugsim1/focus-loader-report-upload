@@ -52,9 +52,21 @@ class StreamlitAppSmokeTests(unittest.TestCase):
         app_path = Path(__file__).resolve().parents[1] / "app.py"
         api_url = f"http://127.0.0.1:{server.server_port}"
         try:
-            with patch.dict(os.environ, {"FOCUS_API_URL": api_url}):
+            with patch.dict(
+                os.environ,
+                {
+                    "FOCUS_API_URL": api_url,
+                    "FOCUS_API_URL_ORACLE": api_url,
+                },
+            ):
                 app = AppTest.from_file(str(app_path), default_timeout=10).run()
                 self.assertEqual(len(app.exception), 0)
+                execution_selector = next(
+                    item
+                    for item in app.selectbox
+                    if item.label == "Run loader and database actions as"
+                )
+                self.assertEqual(execution_selector.value, "focusloader")
                 self.assertGreaterEqual(len(app.tabs), 5)
                 self.assertEqual(app.tabs[0].label, "Database tables")
                 self.assertNotIn("Deploy schema", [tab.label for tab in app.tabs])
@@ -87,6 +99,20 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.assertNotIn(
                     "Destructive-action confirmation",
                     [text_input.label for text_input in app.text_input],
+                )
+
+                execution_selector.select("oracle").run()
+                self.assertEqual(len(app.exception), 0)
+                self.assertNotIn("database_deployment_token", app.session_state)
+                backend_executable = next(
+                    item
+                    for item in app.text_input
+                    if item.label == "Backend executable"
+                )
+                self.assertEqual(
+                    backend_executable.value,
+                    "/home/oracle/focus-loader-report-upload/dist/"
+                    "focus-loader-report-upload-linux-amd64",
                 )
         finally:
             server.shutdown()

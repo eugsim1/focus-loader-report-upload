@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-API_URL=${FOCUS_API_URL:-http://127.0.0.1:8080}
+FOCUSLOADER_API_URL=${FOCUS_API_URL_FOCUSLOADER:-${FOCUS_API_URL:-http://127.0.0.1:8080}}
+ORACLE_API_URL=${FOCUS_API_URL_ORACLE:-http://127.0.0.1:8081}
 UI_URL=${FOCUS_UI_URL:-http://127.0.0.1:8501}
 PYTHON_BIN=${PYTHON_BIN:-python3}
 SQL_SCRIPTS_DIR=${FOCUS_SQL_SCRIPTS_DIR:-/opt/focus-loader/sql_scripts}
@@ -12,34 +13,43 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[1/6] Go backend health"
-curl -fsS "${API_URL}/api/v1/health" -o "${work_dir}/health.json"
+echo "[1/7] focusloader Go backend health"
+curl -fsS "${FOCUSLOADER_API_URL}/api/v1/health" -o "${work_dir}/health.json"
 "${PYTHON_BIN}" -c \
   'import json,sys; p=json.load(open(sys.argv[1], encoding="utf-8")); assert p["status"] == "ok" and p["version"]' \
   "${work_dir}/health.json"
 
-echo "[2/6] TNS alias catalog"
-curl -fsS "${API_URL}/api/v1/tns/aliases" -o "${work_dir}/aliases.json"
+echo "[2/7] oracle Go backend health"
+curl -fsS "${ORACLE_API_URL}/api/v1/health" -o "${work_dir}/oracle-health.json"
+"${PYTHON_BIN}" -c \
+  'import json,sys; p=json.load(open(sys.argv[1], encoding="utf-8")); assert p["status"] == "ok" and p["version"]' \
+  "${work_dir}/oracle-health.json"
+
+echo "[3/7] TNS alias catalog"
+curl -fsS "${FOCUSLOADER_API_URL}/api/v1/tns/aliases" -o "${work_dir}/aliases.json"
 "${PYTHON_BIN}" -c \
   'import json,sys; p=json.load(open(sys.argv[1], encoding="utf-8")); assert p["aliases"] and p["firstAlias"] == p["aliases"][0]' \
   "${work_dir}/aliases.json"
 
-echo "[3/6] Fixed schema deployment prerequisites"
+echo "[4/7] Fixed schema deployment prerequisites"
 test -x "${SQL_SCRIPTS_DIR}/deploy_focus_schema_with_sqlloader_audit.sh"
 test -w "${SQL_SCRIPTS_DIR}/focus.conf"
 test -w "$(dirname "${SQL_SCRIPTS_DIR}")/focus.conf"
 command -v sqlplus >/dev/null
 
-echo "[4/6] Loader execution API"
+echo "[5/7] Loader execution APIs"
 status=$(curl -sS -o "${work_dir}/loader-jobs.json" -w '%{http_code}' \
-  "${API_URL}/api/v1/loader/jobs")
+  "${FOCUSLOADER_API_URL}/api/v1/loader/jobs")
+[[ "${status}" == "405" ]]
+status=$(curl -sS -o "${work_dir}/oracle-loader-jobs.json" -w '%{http_code}' \
+  "${ORACLE_API_URL}/api/v1/loader/jobs")
 [[ "${status}" == "405" ]]
 
-echo "[5/6] Streamlit health"
+echo "[6/7] Streamlit health"
 health=$(curl -fsS "${UI_URL}/_stcore/health")
 [[ "${health}" == "ok" ]]
 
-echo "[6/6] Streamlit page"
+echo "[7/7] Streamlit page"
 curl -fsS "${UI_URL}/" -o "${work_dir}/streamlit.html"
 grep -qi 'streamlit' "${work_dir}/streamlit.html"
 

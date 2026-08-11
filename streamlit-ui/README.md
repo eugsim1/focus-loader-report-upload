@@ -13,6 +13,8 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
 ## What is implemented
 
 - Independent Python/Streamlit process on `127.0.0.1:8501`.
+- Sidebar execution-user selector for isolated `focusloader` and `oracle`
+  backends on `127.0.0.1:8080` and `127.0.0.1:8081`.
 - Go backend health validation through `GET /api/v1/health`.
 - Ordered alias discovery through `GET /api/v1/tns/aliases`.
 - First-tab database connection using the first TNS alias, an editable Oracle
@@ -65,7 +67,8 @@ flowchart LR
     Browser["Administrator browser"]
     Tunnel["SSH or OCI Bastion tunnel"]
     UI["Streamlit UI<br/>127.0.0.1:8501"]
-    API["Go TNS, metadata, and deployment API<br/>127.0.0.1:8080"]
+    API["focusloader Go backend<br/>127.0.0.1:8080"]
+    OracleAPI["oracle Go backend<br/>127.0.0.1:8081"]
     TNS["$TNS_ADMIN/tnsnames.ora"]
     Builder["Validated command preview"]
     Execute["Fixed-binary job API<br/>one job at a time"]
@@ -75,14 +78,15 @@ flowchart LR
     OCI["OCI and Autonomous Database"]
 
     Browser --> Tunnel --> UI
-    UI --> API --> TNS
+    UI -->|"focusloader selected"| API --> TNS
+    UI -->|"oracle selected"| OracleAPI --> TNS
     API -->|"credential-once lookup"| DB
     API -->|"one-use authorization"| Script --> DB
     UI --> Builder --> Execute --> Loader --> OCI
     Execute -->|"COUNT TEMP_OCI_FOCUS every 5s"| DB
 ```
 
-The Streamlit process never reads the wallet or `tnsnames.ora`. The Go process
+The Streamlit process never reads the wallet or `tnsnames.ora`. The selected Go process
 owns Oracle Net access. Alias responses contain only aliases, source path, and
 read time. For a table lookup, Streamlit sends the submitted credentials to the
 loopback-only Go API; the Go process uses the first alias, executes a fixed
@@ -94,8 +98,10 @@ command arguments or environment values, redacts both passwords from output,
 and uses the new schema's password for the final fixed table query. The loader
 job API separately revalidates builder fields, starts only the configured
 binary, and uses fixed current-schema row-count SQL while the job runs. The API
-URL comes from server-side `FOCUS_API_URL` and cannot be changed by a browser
-user.
+URLs come from server-side environment variables and cannot be changed by a
+browser user. Changing the execution identity clears database authorization,
+schema results, built commands, and loader-job state so credentials/results
+cannot cross the two Unix-user boundaries.
 
 ## Directory contents
 
@@ -117,8 +123,10 @@ Related deployment files are located in the parent repository:
 
 ```text
 deploy/focus-loader-tns-gui.service.example
+deploy/focus-loader-tns-gui-oracle.service.example
 deploy/focus-loader-streamlit.env.example
 deploy/focus-loader-streamlit.service.example
+scripts/copy-oracle-oci-config-to-focusloader.sh
 scripts/install-streamlit-ui.sh
 scripts/test-streamlit-ui.sh
 ```
@@ -286,14 +294,16 @@ The instructions assume:
 
 - Oracle Linux 8.8 or newer;
 - the `focusloader` service account already exists;
-- the new Go binary is installed at
-  `/opt/focus-loader/focus-loader-report-upload`;
+- the `oracle` account, `/home/oracle/.oci/config`, and the complete repository
+  at `/home/oracle/focus-loader-report-upload` already exist;
+- the new Go binary has been built as
+  `/home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64`;
 - the service account can traverse the TNS directory, read
   `$TNS_ADMIN/tnsnames.ora`, and read the Oracle Net/wallet files required for
   a real connection (commonly `sqlnet.ora` and `cwallet.sso` for an ADB wallet);
 - outbound access to the approved Python package repository is available
   during installation;
-- Oracle SQL*Plus is installed and executable by `focusloader`;
+- Oracle SQL*Plus is installed and executable by both users;
 - `/opt/focus-loader/focus.conf` exists and is writable by `focusloader` so a
   successful schema deployment can synchronize the loader configuration;
 - `curl`, `systemd`, and OpenSSH are installed.
@@ -314,18 +324,14 @@ The execution tab and live row counter require the `26.9.0-loader-execution-ui`
 Go API and UI to be installed together.
 
 ```bash
-cd /opt/focus-loader/src
+cd /home/oracle/focus-loader-report-upload
 go mod download
 go mod verify
 CGO_ENABLED=1 go test ./...
 CGO_ENABLED=1 go build -buildvcs=false -trimpath \
-  -o dist/focus-loader-report-upload .
-
-sudo systemctl stop focus-loader-tns-gui.service 2>/dev/null || true
-sudo install -o focusloader -g focusloader -m 0750 \
-  dist/focus-loader-report-upload \
-  /opt/focus-loader/focus-loader-report-upload
-/opt/focus-loader/focus-loader-report-upload -version
+  -o dist/focus-loader-report-upload-linux-amd64 .
+chmod 0750 dist/focus-loader-report-upload-linux-amd64
+dist/focus-loader-report-upload-linux-amd64 -version
 ```
 
 Expected version:
@@ -395,13 +401,36 @@ world-readable.
 
 ## 3A. Automated installation
 
-Review the installer before running it. It copies the UI and fixed deployment
-script, creates an isolated virtual environment and writable
-`/opt/focus-loader/work_report_dir`, installs Streamlit and both systemd units,
-verifies SQL*Plus/configuration access, and waits for the local health endpoints.
+Review the installer before running it. It installs the focusloader binary when
+needed, copies the UI and fixed deployment script, creates an isolated virtual
+environment and work directories, installs Streamlit plus both Go backend
+services, verifies SQL*Plus/configuration access, and waits for all three local
+health endpoints.
+
+It also copies every regular file and directory from `/home/oracle/.oci` to the
+actual focusloader home returned by `getent passwd` (normally
+`/home/focusloader/.oci`). Destination directories are `0700`, files are
+`0600`, and ownership is `focusloader:focusloader`. In the copied `config`,
+`key_file` and `security_token_file` entries are rewritten to absolute paths
+under `/home/focusloader/.oci`. Symlinks/special files and missing rewritten key
+targets cause a safe failure. Existing unrelated target files are not deleted.
+
+To refresh only the OCI copy later, run:
 
 ```bash
-cd /opt/focus-loader/src
+sudo ./scripts/copy-oracle-oci-config-to-focusloader.sh
+sudo -u focusloader test -r /home/focusloader/.oci/config
+sudo -u focusloader awk -F= \
+  '/^(key_file|security_token_file)=/ {print $1 "=" $2}' \
+  /home/focusloader/.oci/config
+```
+
+The last command prints paths only, never private-key contents. Re-run it after
+the oracle profile gains a new key or session-token file; the copy is a
+point-in-time snapshot, not an automatic credential synchronizer.
+
+```bash
+cd /home/oracle/focus-loader-report-upload
 less scripts/install-streamlit-ui.sh
 sudo TNS_ADMIN=/opt/oracle/wallet \
   PYTHON_BIN=python3.11 \
@@ -413,16 +442,15 @@ Optional installer environment variables:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `APP_DIR` | `/opt/focus-loader` | Installed loader and UI location. |
-| `SERVICE_USER` | `focusloader` | Non-root systemd account. |
-| `SERVICE_GROUP` | `focusloader` | Installed file group. |
 | `PYTHON_BIN` | `python3.11` | Python used to create the virtual environment. |
 | `TNS_ADMIN` | `/opt/oracle/wallet` | Directory containing `tnsnames.ora`. |
-| `FOCUS_API_URL` | `http://127.0.0.1:8080` | Server-side Go API URL. |
 | `SQLPLUS_BIN` | First `sqlplus` in root's `PATH` | Absolute SQL*Plus executable used to build the service `PATH`. |
 
-The installer does not build or replace the Go executable. Complete step 1
-first.
+The service identities, API ports, and executable locations are fixed security
+boundaries: `focusloader` uses `/opt/focus-loader/focus-loader-report-upload`
+on port 8080; `oracle` uses
+`/home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64`
+on port 8081. Complete step 1 first.
 
 ## 3B. Manual installation
 
@@ -546,6 +574,12 @@ Streamlit recommends terminating production TLS at a reverse proxy or load
 balancer; see its [HTTPS guidance](https://docs.streamlit.io/develop/concepts/configuration/https-support).
 
 ## 6. Using the interface
+
+Before using a tab, choose **focusloader** or **oracle** in the sidebar. Every
+database, schema-deployment, and loader-execution request goes only to the
+loopback backend running as that selected account. Switching accounts clears
+previous authentication and execution state and changes the command builder's
+default executable path.
 
 ### Database tables tab (first tab)
 
@@ -785,7 +819,7 @@ directory to roll back application code.
 
 ## Security boundary
 
-- Both listeners default to `127.0.0.1`.
+- Streamlit and both Go backend listeners bind only to `127.0.0.1`.
 - The browser cannot override the backend URL.
 - Streamlit does not read the wallet or TNS file.
 - The API does not return connect descriptors or wallet contents.
@@ -820,8 +854,12 @@ directory to roll back application code.
 - The row monitor executes only fixed `SELECT COUNT(*) FROM TEMP_OCI_FOCUS` SQL
   as the configured database user; the browser cannot supply SQL or a table.
 - Shell arguments are represented as an argument list and POSIX-quoted.
-- The services run as the unprivileged `focusloader` account with systemd
-  hardening directives.
+- The Streamlit service and one backend run as `focusloader`; the second backend
+  runs as `oracle` only when explicitly selected in the UI. Both backend units
+  use systemd hardening and fixed executable/work paths.
+- The installer copies OCI files without loosening them: target directories use
+  `0700`, files use `0600`, and configuration paths are absolute. It rejects
+  symlinks/special files and never prints private-key contents.
 - Use an authenticated TLS reverse proxy before any shared network exposure.
 - Review dependency updates and GitHub security alerts before deployment.
 

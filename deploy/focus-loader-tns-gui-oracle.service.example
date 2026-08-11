@@ -1,0 +1,27 @@
+[Unit]
+Description=FOCUS Loader oracle-user database and execution API
+After=network.target
+
+[Service]
+Type=simple
+User=oracle
+WorkingDirectory=/home/oracle/focus-loader-report-upload
+EnvironmentFile=/etc/focus-loader/tns-gui-oracle.env
+ExecStart=/home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64 -tns-gui -tns-gui-listen 127.0.0.1:8081
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+UMask=0077
+ReadWritePaths=/home/oracle/focus-loader-report-upload/focus.conf /home/oracle/focus-loader-report-upload/sql_scripts/focus.conf /home/oracle/focus-loader-report-upload/work_report_dir
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,19 @@
 # Changelog
 
+## 26.9.2-dual-user-streamlit
+
+- Added a Streamlit execution-identity dropdown for `focusloader` and `oracle`,
+  backed by separate loopback Go services so database, deployment, OCI, and
+  loader operations execute with the selected Unix account.
+- Fixed the oracle backend executable at
+  `/home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64`
+  and clear backend-bound session state whenever the identity changes.
+- Added secure installer copying of every regular `/home/oracle/.oci` file to
+  the focusloader home with private permissions, ownership correction, absolute
+  key/token path rewriting, unsafe-file rejection, and target validation.
+- Expanded systemd assets, dual-backend smoke checks, path-rewrite tests,
+  installation steps, operating guidance, and security documentation.
+
 ## 26.9.1-api-key-parameter-file
 
 - Added `-ParameterFile` to the Windows API-key Streamlit connector so a

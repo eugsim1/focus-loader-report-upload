@@ -30,10 +30,29 @@ from focus_api import (
 )
 
 
-DEFAULT_API_URL = os.getenv("FOCUS_API_URL", "http://127.0.0.1:8080")
-DEFAULT_EXECUTABLE = os.getenv(
-    "FOCUS_LOADER_EXECUTABLE", "/opt/focus-loader/focus-loader-report-upload"
-)
+EXECUTION_BACKENDS = {
+    "focusloader": {
+        "api_url": os.getenv(
+            "FOCUS_API_URL_FOCUSLOADER",
+            os.getenv("FOCUS_API_URL", "http://127.0.0.1:8080"),
+        ),
+        "executable": os.getenv(
+            "FOCUS_LOADER_EXECUTABLE_FOCUSLOADER",
+            os.getenv(
+                "FOCUS_LOADER_EXECUTABLE",
+                "/opt/focus-loader/focus-loader-report-upload",
+            ),
+        ),
+    },
+    "oracle": {
+        "api_url": os.getenv("FOCUS_API_URL_ORACLE", "http://127.0.0.1:8081"),
+        "executable": os.getenv(
+            "FOCUS_LOADER_EXECUTABLE_ORACLE",
+            "/home/oracle/focus-loader-report-upload/dist/"
+            "focus-loader-report-upload-linux-amd64",
+        ),
+    },
+}
 ORACLE_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]{0,127}$")
 PROTECTED_DEPLOYMENT_SCHEMAS = {"ADMIN", "AUDSYS", "PDBADMIN", "SYS", "SYSTEM"}
 
@@ -372,7 +391,27 @@ def render_schema_deployment(api_url: str, catalog: AliasCatalog) -> None:
         st.rerun()
 
 
-def render_command_builder(selected_alias: str) -> None:
+def clear_execution_user_context() -> None:
+    """Discard state that belongs to the previously selected Unix backend."""
+    for key in (
+        "database_tables_result",
+        "database_tables_error",
+        "database_deployment_token",
+        "database_deployment_token_expires_at_utc",
+        "database_admin_user",
+        "schema_deployment_result",
+        "loader_command",
+        "loader_script",
+        "loader_execution_config",
+        "loader_job_id",
+        "loader_job_last",
+    ):
+        st.session_state.pop(key, None)
+
+
+def render_command_builder(
+    selected_alias: str, default_executable: str, execution_user: str
+) -> None:
     st.subheader("Loader command builder")
     st.warning(
         "This page validates and previews a command. Use the separate Execute "
@@ -388,7 +427,15 @@ def render_command_builder(selected_alias: str) -> None:
             ["Authentication", "Source", "Tag fields", "Destination", "Flags"]
         )
         with authentication:
-            executable = st.text_input("Loader executable", value=DEFAULT_EXECUTABLE)
+            executable = st.text_input(
+                "Loader executable",
+                value=default_executable,
+                key=f"loader_executable_{execution_user}",
+                help=(
+                    "Preview/download path for the selected Unix user. Actual GUI "
+                    "execution remains fixed by that user's Go backend service."
+                ),
+            )
             oci_auth_mode = st.radio(
                 "OCI authentication",
                 ["OCI config/profile", "Instance principal"],
@@ -672,10 +719,18 @@ def render_loader_execution(api_url: str) -> None:
         st.rerun()
 
 
-def render_diagnostics(api_url: str, health: Health, catalog: AliasCatalog) -> None:
+def render_diagnostics(
+    api_url: str,
+    health: Health,
+    catalog: AliasCatalog,
+    execution_user: str,
+    executable: str,
+) -> None:
     st.subheader("Diagnostics")
     st.json(
         {
+            "executionUser": execution_user,
+            "configuredExecutable": executable,
             "apiUrl": api_url,
             "backendStatus": health.status,
             "backendVersion": health.version,
@@ -697,19 +752,37 @@ def main() -> None:
     st.caption("Modular Streamlit frontend with a Go control boundary")
 
     with st.sidebar:
-        st.header("Go backend")
-        api_url = DEFAULT_API_URL
+        st.header("Execution identity")
+        execution_user = st.selectbox(
+            "Run loader and database actions as",
+            options=list(EXECUTION_BACKENDS),
+            index=0,
+            key="execution_user",
+            on_change=clear_execution_user_context,
+            help=(
+                "Selects an isolated loopback Go backend running as this Linux user."
+            ),
+        )
+        backend = EXECUTION_BACKENDS[execution_user]
+        api_url = backend["api_url"]
+        default_executable = backend["executable"]
         st.text_input(
             "API URL",
             value=api_url,
             disabled=True,
-            help="Set FOCUS_API_URL in the systemd environment; browser users cannot override it.",
+            help="Configured by systemd; browser users cannot override it.",
+        )
+        st.text_input(
+            "Backend executable",
+            value=default_executable,
+            disabled=True,
+            help="The selected backend permits only this server-configured binary.",
         )
         if st.button("Refresh backend", use_container_width=True):
             st.rerun()
         st.divider()
         st.caption(
-            "Both services must remain on 127.0.0.1. Enter database credentials "
+            "All services must remain on 127.0.0.1. Enter database credentials "
             "only through the protected SSH/OCI Bastion tunnel."
         )
 
@@ -743,13 +816,15 @@ def main() -> None:
         selected_alias = render_connection(health, catalog)
     tab_index += 1
     with tabs[tab_index]:
-        render_command_builder(selected_alias)
+        render_command_builder(selected_alias, default_executable, execution_user)
     tab_index += 1
     with tabs[tab_index]:
         render_loader_execution(api_url)
     tab_index += 1
     with tabs[tab_index]:
-        render_diagnostics(api_url, health, catalog)
+        render_diagnostics(
+            api_url, health, catalog, execution_user, default_executable
+        )
 
 
 if __name__ == "__main__":

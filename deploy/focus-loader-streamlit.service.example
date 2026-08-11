@@ -1,7 +1,7 @@
 [Unit]
 Description=FOCUS Loader Streamlit frontend
-After=network.target focus-loader-tns-gui.service
-Requires=focus-loader-tns-gui.service
+After=network.target focus-loader-tns-gui.service focus-loader-tns-gui-oracle.service
+Wants=focus-loader-tns-gui.service focus-loader-tns-gui-oracle.service
 
 [Service]
 Type=simple
