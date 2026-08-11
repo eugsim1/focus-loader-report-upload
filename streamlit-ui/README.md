@@ -46,6 +46,11 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
 - A **Cost analytics** tab that refreshes monthly `EFFECTIVE_COST` totals and
   the unique `SERVICE_NAME` list while committed loader rows become visible.
   Zero rows produce empty analytics and never prevent the loader from starting.
+- A **Schema stats** tab that checks a validated schema's fixed
+  `TEMP_OCI_FOCUS` table for existence, data, total rows, latest `LOAD_DATE`,
+  and current-month cost totals grouped by billing currency.
+- A sidebar **Reset interface** button that clears UI state without cancelling
+  a loader process already running in the backend.
 - Diagnostics page with local API commands and non-secret backend metadata.
 - Python unit tests, Go API/parser tests, a systemd service, an automated
   installer, and a deployed-service smoke-test script.
@@ -150,7 +155,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.10.1-empty-schema-analytics"
+  "version": "26.11.0-schema-stats-reset"
 }
 ```
 
@@ -303,6 +308,13 @@ empty not-yet-populated snapshot. Only one loader job can run at a time, jobs
 time out after 24 hours, and completed status and its final analytics snapshot
 are retained in memory for two hours.
 
+`POST /api/v1/schema/stats` accepts the same `username`, `password`, and
+validated `schema` fields as the table-list request. The backend always uses
+the first TNS alias and fixed `SCHEMA.TEMP_OCI_FOCUS` table. Its response
+contains `tableExists`, `hasData`, `totalRows`, `lastLoadDate`, `currentMonth`,
+`currentMonthCosts`, and `queriedAtUtc`. Current-month costs remain separated
+by `billingCurrency`.
+
 ## Oracle Linux 8 prerequisites
 
 The instructions assume:
@@ -335,8 +347,8 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 
 ## 1. Build and install the updated Go backend
 
-The execution and cost tabs require the `26.10.1-empty-schema-analytics`
-Go API and UI to be installed together.
+The execution, cost, and schema-statistics tabs require the
+`26.11.0-schema-stats-reset` Go API and UI to be installed together.
 
 ```bash
 cd /home/oracle/focus-loader-report-upload
@@ -352,7 +364,7 @@ dist/focus-loader-report-upload-linux-amd64 -version
 Expected version:
 
 ```text
-focus-loader-report-upload 26.10.1-empty-schema-analytics
+focus-loader-report-upload 26.11.0-schema-stats-reset
 ```
 
 ## 2. Verify TNS permissions
@@ -705,6 +717,29 @@ and null/blank `SERVICE_NAME` values are omitted. If `TEMP_OCI_FOCUS` contains
 zero committed rows, both tables remain empty and the loader continues normally;
 analytics begin automatically after the row monitor sees the first commit.
 
+### Schema stats tab
+
+1. Open **Schema stats** and enter a database login.
+2. Keep **Check the login user's schema** selected, or enter another schema
+   that the login is authorized to read.
+3. Enter the password and choose **Check schema statistics**.
+4. Review whether `TEMP_OCI_FOCUS` exists and contains data, its total rows,
+   maximum `LOAD_DATE`, and the current database month's total
+   `EFFECTIVE_COST` for each billing currency.
+
+This is a manual snapshot because the password is not stored for background
+refresh. Run the check again to refresh it. The browser cannot submit SQL or a
+table name. The backend validates the schema identifier, runs fixed read-only
+queries, closes the connection, and redacts the password from errors.
+
+### Reset interface button
+
+Use **Reset interface** in the sidebar to clear forms, database authorization,
+command-builder values/results, loader-job references, statistics, and other
+Streamlit session state. This resets only the browser interface: an active
+loader job continues in the backend and can no longer be followed from that
+reset browser session.
+
 ### Diagnostics tab
 
 Use this page to copy local health commands and review non-secret API metadata.
@@ -964,8 +999,8 @@ curl -v http://127.0.0.1:8081/api/v1/health
 sudo grep '^FOCUS_API_URL' /etc/focus-loader/streamlit.env
 ```
 
-An older binary does not return loader cost analytics; install the
-`26.10.1-empty-schema-analytics` binary before using the current interface.
+An older binary does not provide schema statistics; install the
+`26.11.0-schema-stats-reset` binary before using the current interface.
 
 ### The alias endpoint returns an error
 
@@ -1106,6 +1141,9 @@ directory to roll back application code.
 - Analytics errors are password-redacted and do not stop the loader. Only the
   resulting cost/service snapshot—not the credential—is retained with the
   completed job result.
+- Schema-statistics requests use only fixed queries for validated
+  `SCHEMA.TEMP_OCI_FOCUS`: table existence, total rows, `MAX(LOAD_DATE)`, and
+  current-month cost by currency. The request password is not retained.
 - Shell arguments are represented as an argument list and POSIX-quoted.
 - The Streamlit service and one backend run as `focusloader`; the second backend
   runs as `oracle` only when explicitly selected in the UI. Both backend units

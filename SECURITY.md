@@ -35,6 +35,10 @@ Do not report suspected vulnerabilities in a public issue. Use GitHub's private 
   user. It reports committed rows, monthly totals grouped by billing currency,
   and unique services; it never accepts browser-supplied SQL, table names,
   schemas, or aliases.
+- Schema statistics run only fixed, read-only existence, row-count,
+  `MAX(LOAD_DATE)`, and current-month cost queries for validated
+  `SCHEMA.TEMP_OCI_FOCUS`. The endpoint never accepts a table name or SQL, and
+  its database password is used for one request and redacted from errors.
 - Enter database passwords only in masked forms over
   the protected loopback SSH/OCI Bastion path. Never enter a private key, wallet
   content, OCI API key, or Vault secret value in the Streamlit interface.

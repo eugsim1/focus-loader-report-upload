@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.10.1-empty-schema-analytics"
+	version       = "26.11.0-schema-stats-reset"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

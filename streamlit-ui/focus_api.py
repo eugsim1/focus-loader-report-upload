@@ -70,6 +70,21 @@ class MonthlyEffectiveCost:
 
 
 @dataclass(frozen=True)
+class SchemaStatistics:
+    connect_alias: str
+    username: str
+    schema: str
+    table_name: str
+    table_exists: bool
+    has_data: bool
+    total_rows: int
+    last_load_date: str
+    current_month: str
+    current_month_costs: tuple[MonthlyEffectiveCost, ...]
+    queried_at_utc: str
+
+
+@dataclass(frozen=True)
 class LoaderJob:
     job_id: str
     status: str
@@ -183,6 +198,46 @@ class FocusAPIClient:
             ),
         )
 
+    def schema_statistics(
+        self, username: str, password: str, schema: str
+    ) -> SchemaStatistics:
+        payload = self._request_json(
+            "/api/v1/schema/stats",
+            method="POST",
+            body={"username": username, "password": password, "schema": schema},
+            timeout_seconds=max(self.timeout_seconds, 35.0),
+        )
+        costs = self._monthly_costs(payload, "currentMonthCosts")
+        total_rows = self._required_int(payload, "totalRows")
+        table_exists = self._required_bool(payload, "tableExists")
+        has_data = self._required_bool(payload, "hasData")
+        if total_rows < 0 or has_data != (total_rows > 0):
+            raise FocusAPIError("The Go API returned inconsistent schema statistics.")
+        if not table_exists and (has_data or total_rows != 0):
+            raise FocusAPIError("The Go API returned data for a missing schema table.")
+        current_month = self._string(payload, "currentMonth")
+        if current_month and (
+            len(current_month) != 7
+            or current_month[4] != "-"
+            or not current_month[:4].isdigit()
+            or not current_month[5:].isdigit()
+            or not 1 <= int(current_month[5:]) <= 12
+        ):
+            raise FocusAPIError("The Go API returned an invalid current cost month.")
+        return SchemaStatistics(
+            connect_alias=self._required_string(payload, "connectAlias"),
+            username=self._required_string(payload, "username"),
+            schema=self._required_string(payload, "schema"),
+            table_name=self._required_string(payload, "tableName"),
+            table_exists=table_exists,
+            has_data=has_data,
+            total_rows=total_rows,
+            last_load_date=self._string(payload, "lastLoadDate"),
+            current_month=current_month,
+            current_month_costs=costs,
+            queried_at_utc=self._required_string(payload, "queriedAtUtc"),
+        )
+
     def deploy_schema(
         self,
         deployment_token: str,
@@ -269,7 +324,49 @@ class FocusAPIClient:
             not isinstance(exit_code, int) or isinstance(exit_code, bool)
         ):
             raise FocusAPIError("The Go API returned an invalid loader exit code.")
-        raw_monthly_costs = payload.get("monthlyCosts", [])
+        monthly_costs = self._monthly_costs(payload, "monthlyCosts")
+        raw_services = payload.get("services", [])
+        if raw_services is None:
+            raw_services = []
+        if not isinstance(raw_services, list) or not all(
+            isinstance(service, str) and service for service in raw_services
+        ):
+            raise FocusAPIError("The Go API returned an invalid unique service list.")
+        return LoaderJob(
+            job_id=self._required_string(payload, "jobId"),
+            status=status,
+            database_user=self._required_string(payload, "databaseUser"),
+            database_alias=self._required_string(payload, "databaseAlias"),
+            table_name=self._required_string(payload, "tableName"),
+            started_at_utc=self._string(payload, "startedAtUtc"),
+            finished_at_utc=self._string(payload, "finishedAtUtc"),
+            exit_code=exit_code,
+            initial_row_count=self._required_int(payload, "initialRowCount"),
+            initial_row_count_known=self._required_bool(
+                payload, "initialRowCountKnown"
+            ),
+            current_row_count=self._required_int(payload, "currentRowCount"),
+            current_row_count_known=self._required_bool(
+                payload, "currentRowCountKnown"
+            ),
+            rows_inserted=self._required_int(payload, "rowsInserted"),
+            rows_inserted_known=self._required_bool(payload, "rowsInsertedKnown"),
+            row_count_updated_at_utc=self._string(payload, "rowCountUpdatedAtUtc"),
+            row_count_error=self._string(payload, "rowCountError"),
+            monthly_costs=monthly_costs,
+            services=tuple(raw_services),
+            analytics_updated_at_utc=self._optional_string(
+                payload, "analyticsUpdatedAtUtc"
+            ),
+            analytics_error=self._optional_string(payload, "analyticsError"),
+            output=self._string(payload, "output"),
+            error=self._string(payload, "error"),
+        )
+
+    def _monthly_costs(
+        self, payload: Mapping[str, Any], field_name: str
+    ) -> tuple[MonthlyEffectiveCost, ...]:
+        raw_monthly_costs = payload.get(field_name, [])
         if raw_monthly_costs is None:
             raw_monthly_costs = []
         if not isinstance(raw_monthly_costs, list):
@@ -305,43 +402,7 @@ class FocusAPIClient:
                     effective_cost=effective_cost,
                 )
             )
-        raw_services = payload.get("services", [])
-        if raw_services is None:
-            raw_services = []
-        if not isinstance(raw_services, list) or not all(
-            isinstance(service, str) and service for service in raw_services
-        ):
-            raise FocusAPIError("The Go API returned an invalid unique service list.")
-        return LoaderJob(
-            job_id=self._required_string(payload, "jobId"),
-            status=status,
-            database_user=self._required_string(payload, "databaseUser"),
-            database_alias=self._required_string(payload, "databaseAlias"),
-            table_name=self._required_string(payload, "tableName"),
-            started_at_utc=self._string(payload, "startedAtUtc"),
-            finished_at_utc=self._string(payload, "finishedAtUtc"),
-            exit_code=exit_code,
-            initial_row_count=self._required_int(payload, "initialRowCount"),
-            initial_row_count_known=self._required_bool(
-                payload, "initialRowCountKnown"
-            ),
-            current_row_count=self._required_int(payload, "currentRowCount"),
-            current_row_count_known=self._required_bool(
-                payload, "currentRowCountKnown"
-            ),
-            rows_inserted=self._required_int(payload, "rowsInserted"),
-            rows_inserted_known=self._required_bool(payload, "rowsInsertedKnown"),
-            row_count_updated_at_utc=self._string(payload, "rowCountUpdatedAtUtc"),
-            row_count_error=self._string(payload, "rowCountError"),
-            monthly_costs=tuple(monthly_costs),
-            services=tuple(raw_services),
-            analytics_updated_at_utc=self._optional_string(
-                payload, "analyticsUpdatedAtUtc"
-            ),
-            analytics_error=self._optional_string(payload, "analyticsError"),
-            output=self._string(payload, "output"),
-            error=self._string(payload, "error"),
-        )
+        return tuple(monthly_costs)
 
     def _get_json(self, path: str) -> Mapping[str, Any]:
         return self._request_json(path, method="GET")

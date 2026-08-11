@@ -117,6 +117,12 @@ status at `GET /api/v1/loader/jobs/<jobId>`. Its row monitor runs only a fixed
 user. Analytics refresh every 30 seconds while a job runs and are returned with
 the job snapshot.
 
+The versioned `POST /api/v1/schema/stats` endpoint accepts a validated database
+login and schema owner, always targets only `TEMP_OCI_FOCUS`, and reports table
+existence, data presence, total rows, maximum `LOAD_DATE`, and current-month
+`EFFECTIVE_COST` totals grouped by billing currency. It does not accept SQL or
+a table name.
+
 Example response:
 
 ```json

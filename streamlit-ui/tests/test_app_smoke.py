@@ -25,7 +25,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
         class BackendHandler(BaseHTTPRequestHandler):
             def do_GET(self):
                 if self.path == "/api/v1/health":
-                    payload = {"status": "ok", "version": "26.10.1-empty-schema-analytics"}
+                    payload = {"status": "ok", "version": "26.11.0-schema-stats-reset"}
                 elif self.path == "/api/v1/tns/aliases":
                     payload = {
                         "aliases": ["FOCUS_HIGH", "FOCUS_LOW"],
@@ -74,6 +74,41 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.end_headers()
                 self.wfile.write(body)
 
+            def do_POST(self):
+                if self.path != "/api/v1/schema/stats":
+                    self.send_error(404)
+                    return
+                content_length = int(self.headers.get("Content-Length", "0"))
+                request_payload = json.loads(self.rfile.read(content_length))
+                if request_payload.get("password") != "stats-secret":
+                    self.send_error(401)
+                    return
+                payload = {
+                    "connectAlias": "FOCUS_HIGH",
+                    "username": request_payload["username"],
+                    "schema": request_payload["schema"],
+                    "tableName": "TEMP_OCI_FOCUS",
+                    "tableExists": True,
+                    "hasData": True,
+                    "totalRows": 125,
+                    "lastLoadDate": "2026-08-11T18:30:00",
+                    "currentMonth": "2026-08",
+                    "currentMonthCosts": [
+                        {
+                            "month": "2026-08",
+                            "billingCurrency": "EUR",
+                            "effectiveCost": "42.75",
+                        }
+                    ],
+                    "queriedAtUtc": "2026-08-11T18:31:00Z",
+                }
+                body = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             def log_message(self, format, *args):
                 return
 
@@ -102,7 +137,9 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.assertEqual(app.tabs[0].label, "Database tables")
                 self.assertNotIn("Deploy schema", [tab.label for tab in app.tabs])
                 self.assertIn("Execute loader", [tab.label for tab in app.tabs])
+                self.assertIn("Schema stats", [tab.label for tab in app.tabs])
                 self.assertIn("Cost analytics", [tab.label for tab in app.tabs])
+                self.assertIn("Reset interface", [button.label for button in app.button])
                 requested_defaults = {
                     "Pre-load report (-preload-report)": True,
                     "Continue after report (-continue-after-report)": True,
@@ -114,6 +151,36 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 }
                 for label, expected in requested_defaults.items():
                     self.assertEqual(checkbox_values.get(label), expected)
+
+                stats_login_schema = next(
+                    checkbox
+                    for checkbox in app.checkbox
+                    if checkbox.label == "Check the login user's schema"
+                )
+                stats_login_schema.uncheck().run()
+                next(
+                    item
+                    for item in app.text_input
+                    if item.label == "Statistics schema owner"
+                ).input("FOCUS_APP")
+                next(
+                    item
+                    for item in app.text_input
+                    if item.label == "Statistics database password"
+                ).input("stats-secret")
+                next(
+                    button
+                    for button in app.button
+                    if button.label == "Check schema statistics"
+                ).click().run()
+                self.assertEqual(len(app.exception), 0)
+                metric_values = {metric.label: metric.value for metric in app.metric}
+                self.assertEqual(metric_values.get("TEMP_OCI_FOCUS exists"), "Yes")
+                self.assertEqual(metric_values.get("Table has data"), "Yes")
+                self.assertEqual(metric_values.get("Total rows"), "125")
+                self.assertEqual(
+                    metric_values.get("Last LOAD_DATE"), "2026-08-11T18:30:00"
+                )
 
                 app.session_state["database_deployment_token"] = "opaque-test-token"
                 app.session_state["database_deployment_token_expires_at_utc"] = (
@@ -157,6 +224,14 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                     "/home/oracle/focus-loader-report-upload/dist/"
                     "focus-loader-report-upload-linux-amd64",
                 )
+
+                app.session_state["schema_stats_error"] = "temporary error"
+                reset_button = next(
+                    button for button in app.button if button.label == "Reset interface"
+                )
+                reset_button.click().run()
+                self.assertEqual(len(app.exception), 0)
+                self.assertNotIn("schema_stats_error", app.session_state)
         finally:
             server.shutdown()
             server.server_close()

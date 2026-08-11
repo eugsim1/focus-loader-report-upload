@@ -27,6 +27,7 @@ from focus_api import (
     Health,
     LoaderJob,
     SchemaDeployment,
+    SchemaStatistics,
 )
 
 
@@ -391,6 +392,127 @@ def render_schema_deployment(api_url: str, catalog: AliasCatalog) -> None:
         st.rerun()
 
 
+def render_schema_statistics(api_url: str, catalog: AliasCatalog) -> None:
+    st.subheader("Schema statistics")
+    st.caption(
+        "Checks the fixed TEMP_OCI_FOCUS table through the first TNS alias. "
+        "The backend runs only fixed, read-only SQL and closes the database "
+        "connection after this request."
+    )
+    database_user = st.text_input(
+        "Statistics database user",
+        value="ADMIN",
+        key="schema_stats_user",
+        help="Use the schema login itself, ADMIN, or another authorized user.",
+    ).strip()
+    use_login_schema = st.checkbox(
+        "Check the login user's schema",
+        value=True,
+        key="schema_stats_use_login_schema",
+    )
+    if use_login_schema:
+        schema_owner = database_user.upper()
+        st.caption("Schema owner")
+        st.code(schema_owner or "Enter a database user", language=None)
+    else:
+        schema_owner = st.text_input(
+            "Statistics schema owner",
+            value="FOCUS_APP",
+            key="schema_stats_schema",
+            help="The schema containing TEMP_OCI_FOCUS.",
+        ).strip().upper()
+
+    with st.form("schema-statistics", clear_on_submit=True):
+        database_password = st.text_input(
+            "Statistics database password",
+            type="password",
+            help="Used only for this read-only request and never stored by Streamlit.",
+        )
+        submitted = st.form_submit_button(
+            "Check schema statistics", type="primary"
+        )
+
+    if submitted:
+        st.session_state.pop("schema_stats_result", None)
+        st.session_state.pop("schema_stats_error", None)
+        if not database_user:
+            st.session_state["schema_stats_error"] = "Database user is required."
+        elif not schema_owner:
+            st.session_state["schema_stats_error"] = "Schema owner is required."
+        elif not ORACLE_IDENTIFIER.fullmatch(database_user):
+            st.session_state["schema_stats_error"] = (
+                "Database user must be an unquoted Oracle identifier."
+            )
+        elif not ORACLE_IDENTIFIER.fullmatch(schema_owner):
+            st.session_state["schema_stats_error"] = (
+                "Schema owner must be an unquoted Oracle identifier."
+            )
+        elif not database_password:
+            st.session_state["schema_stats_error"] = "Database password is required."
+        else:
+            try:
+                with st.spinner(
+                    f"Checking {schema_owner}.TEMP_OCI_FOCUS through "
+                    f"{catalog.first_alias}..."
+                ):
+                    result = FocusAPIClient(
+                        api_url, timeout_seconds=35.0
+                    ).schema_statistics(
+                        database_user,
+                        database_password,
+                        schema_owner,
+                    )
+                st.session_state["schema_stats_result"] = result
+            except FocusAPIError as error:
+                st.session_state["schema_stats_error"] = str(error)
+
+    if error := st.session_state.get("schema_stats_error"):
+        st.error(error)
+
+    result = st.session_state.get("schema_stats_result")
+    if not isinstance(result, SchemaStatistics):
+        return
+
+    table_column, data_column, rows_column, loaded_column = st.columns(4)
+    table_column.metric("TEMP_OCI_FOCUS exists", "Yes" if result.table_exists else "No")
+    data_column.metric("Table has data", "Yes" if result.has_data else "No")
+    rows_column.metric("Total rows", f"{result.total_rows:,}")
+    loaded_column.metric("Last LOAD_DATE", result.last_load_date or "No loaded rows")
+    st.caption(
+        f"Schema {result.schema}; login {result.username}; alias "
+        f"{result.connect_alias}; checked at {result.queried_at_utc}. "
+        "LOAD_DATE is displayed in the Oracle database session time."
+    )
+
+    if not result.table_exists:
+        st.warning(f"{result.schema}.{result.table_name} does not exist or is not visible.")
+    elif not result.has_data:
+        st.info(f"{result.schema}.{result.table_name} exists but contains no rows.")
+
+    st.markdown(
+        f"#### Current-month effective cost ({result.current_month or 'unavailable'})"
+    )
+    if result.current_month_costs:
+        st.dataframe(
+            [
+                {
+                    "Billing currency": cost.billing_currency,
+                    "Total effective cost": cost.effective_cost,
+                }
+                for cost in result.current_month_costs
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+    elif result.table_exists:
+        st.info("No CHARGE_PERIOD_START rows exist for the current database month.")
+
+    if st.button("Clear schema statistics"):
+        st.session_state.pop("schema_stats_result", None)
+        st.session_state.pop("schema_stats_error", None)
+        st.rerun()
+
+
 def clear_execution_user_context() -> None:
     """Discard state that belongs to the previously selected Unix backend."""
     for key in (
@@ -400,6 +522,8 @@ def clear_execution_user_context() -> None:
         "database_deployment_token_expires_at_utc",
         "database_admin_user",
         "schema_deployment_result",
+        "schema_stats_result",
+        "schema_stats_error",
         "loader_command",
         "loader_script",
         "loader_execution_config",
@@ -873,6 +997,16 @@ def main() -> None:
         )
         if st.button("Refresh backend", use_container_width=True):
             st.rerun()
+        if st.button(
+            "Reset interface",
+            use_container_width=True,
+            help=(
+                "Clears all UI forms and results. It does not stop a loader job "
+                "that is already running in the backend."
+            ),
+        ):
+            st.session_state.clear()
+            st.rerun()
         st.divider()
         st.caption(
             "All services must remain on 127.0.0.1. Enter database credentials "
@@ -899,6 +1033,7 @@ def main() -> None:
             "Connection",
             "Command builder",
             "Execute loader",
+            "Schema stats",
             "Cost analytics",
             "Diagnostics",
         ]
@@ -921,6 +1056,9 @@ def main() -> None:
     tab_index += 1
     with tabs[tab_index]:
         render_loader_execution(api_url)
+    tab_index += 1
+    with tabs[tab_index]:
+        render_schema_statistics(api_url, catalog)
     tab_index += 1
     with tabs[tab_index]:
         render_cost_analytics(api_url)

@@ -66,7 +66,7 @@ func runTNSGUI(ctx context.Context, listenAddress string) error {
 		fmt.Println("WARNING: the TNS GUI has no built-in authentication; use a firewall or reverse proxy before exposing it")
 	}
 	fmt.Printf("TNS GUI listening on http://%s\n", listener.Addr().String())
-	fmt.Println("The service reads TNS aliases, lists schema tables, deploys the fixed schema, runs validated loader jobs, and reports fixed cost analytics.")
+	fmt.Println("The service reads TNS aliases, lists schema tables and statistics, deploys the fixed schema, runs validated loader jobs, and reports fixed cost analytics.")
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -154,6 +154,9 @@ func newTNSGUIHandlerWithLoaderService(
 	})
 	mux.HandleFunc("/api/v1/database/tables", func(w http.ResponseWriter, r *http.Request) {
 		handleDatabaseTables(w, r, getenv, lister, sessions)
+	})
+	mux.HandleFunc("/api/v1/schema/stats", func(w http.ResponseWriter, r *http.Request) {
+		handleSchemaStats(w, r, getenv, readOracleSchemaStats)
 	})
 	mux.HandleFunc("/api/v1/schema/deploy", func(w http.ResponseWriter, r *http.Request) {
 		handleSchemaDeployment(w, r, getenv, sessions, runner, lister)

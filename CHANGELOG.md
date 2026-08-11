@@ -1,5 +1,20 @@
 # Changelog
 
+## 26.11.0-schema-stats-reset
+
+- Added a sidebar **Reset interface** button that clears all Streamlit form,
+  authorization, command, job, and result state without stopping a loader job
+  that is already running in the Go backend.
+- Added a **Schema stats** tab and fixed `POST /api/v1/schema/stats` endpoint to
+  check whether `SCHEMA.TEMP_OCI_FOCUS` exists and has data, display its total
+  rows and latest `LOAD_DATE`, and calculate current-database-month
+  `EFFECTIVE_COST` totals separately by billing currency.
+- Restricted statistics to validated Oracle schema identifiers and fixed,
+  read-only SQL. The password is used for one request, is redacted from errors,
+  and is never returned or retained by Streamlit.
+- Added Go API, password-redaction, Python client, reset-button, and Streamlit
+  smoke-test coverage plus deployment/security documentation.
+
 ## 26.10.1-empty-schema-analytics
 
 - Treat missing, `null`, or not-yet-populated loader analytics fields as empty

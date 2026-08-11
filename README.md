@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.10.1-empty-schema-analytics`
+Version `26.11.0-schema-stats-reset`
 
 > **Independent project disclaimer**
 >
@@ -121,6 +121,11 @@ Current interactions include:
   `CHARGE_PERIOD_START` month and billing currency, plus the sorted unique
   `SERVICE_NAME` list, while the loader inserts committed rows. An empty table
   is shown as empty analytics and never blocks loader startup.
+- a Schema stats tab that checks a selected schema's fixed `TEMP_OCI_FOCUS`
+  table and reports whether it exists/has data, total rows, latest `LOAD_DATE`,
+  and current-month `EFFECTIVE_COST` by billing currency.
+- a Reset interface button that clears browser-side forms and results without
+  terminating an already-running backend loader process.
 
 The command-builder tab does not execute by itself. Its default direct-password
 form is masked and cleared; the preview and downloaded file never contain that
@@ -139,7 +144,7 @@ rewrites copied key/token paths, and provisions separate loopback services. All
 services are reached through SSH/OCI Bastion or an authenticated TLS reverse
 proxy.
 
-Quick deployment after installing the `26.10.1-empty-schema-analytics` Go binary:
+Quick deployment after installing the `26.11.0-schema-stats-reset` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip

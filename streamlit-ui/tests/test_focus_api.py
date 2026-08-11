@@ -30,11 +30,11 @@ class RecordingOpener:
 class FocusAPIClientTests(unittest.TestCase):
     def test_health(self):
         opener = RecordingOpener(
-            {"status": "ok", "version": "26.10.1-empty-schema-analytics"}
+            {"status": "ok", "version": "26.11.0-schema-stats-reset"}
         )
         result = FocusAPIClient("http://127.0.0.1:8080/", opener=opener).health()
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.version, "26.10.1-empty-schema-analytics")
+        self.assertEqual(result.version, "26.11.0-schema-stats-reset")
         self.assertEqual(opener.urls[0][0], "http://127.0.0.1:8080/api/v1/health")
 
     def test_aliases(self):
@@ -78,6 +78,47 @@ class FocusAPIClientTests(unittest.TestCase):
         request = opener.requests[0]
         self.assertEqual(request.method, "POST")
         self.assertEqual(request.headers["Content-type"], "application/json")
+        self.assertEqual(
+            json.loads(request.data.decode("utf-8")),
+            {"username": "ADMIN", "password": "test-secret", "schema": "FOCUS_APP"},
+        )
+        self.assertNotIn("test-secret", request.full_url)
+
+    def test_schema_statistics_posts_credentials_and_parses_fixed_metrics(self):
+        opener = RecordingOpener(
+            {
+                "connectAlias": "FOCUS_HIGH",
+                "username": "ADMIN",
+                "schema": "FOCUS_APP",
+                "tableName": "TEMP_OCI_FOCUS",
+                "tableExists": True,
+                "hasData": True,
+                "totalRows": 125,
+                "lastLoadDate": "2026-08-11T18:30:00",
+                "currentMonth": "2026-08",
+                "currentMonthCosts": [
+                    {
+                        "month": "2026-08",
+                        "billingCurrency": "EUR",
+                        "effectiveCost": "42.75",
+                    }
+                ],
+                "queriedAtUtc": "2026-08-11T18:31:00Z",
+            }
+        )
+        result = FocusAPIClient(
+            "http://127.0.0.1:8080", opener=opener
+        ).schema_statistics("ADMIN", "test-secret", "FOCUS_APP")
+        self.assertTrue(result.table_exists)
+        self.assertTrue(result.has_data)
+        self.assertEqual(result.total_rows, 125)
+        self.assertEqual(result.last_load_date, "2026-08-11T18:30:00")
+        self.assertEqual(result.current_month_costs[0].effective_cost, "42.75")
+        request = opener.requests[0]
+        self.assertEqual(request.method, "POST")
+        self.assertEqual(
+            request.full_url, "http://127.0.0.1:8080/api/v1/schema/stats"
+        )
         self.assertEqual(
             json.loads(request.data.decode("utf-8")),
             {"username": "ADMIN", "password": "test-secret", "schema": "FOCUS_APP"},
