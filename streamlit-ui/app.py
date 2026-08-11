@@ -719,6 +719,99 @@ def render_loader_execution(api_url: str) -> None:
         st.rerun()
 
 
+def render_cost_analytics_snapshot(job: LoaderJob) -> None:
+    month_column, service_column, row_column = st.columns(3)
+    month_column.metric("Month/currency rows", len(job.monthly_costs))
+    service_column.metric("Unique services", len(job.services))
+    row_column.metric(
+        "Loaded rows",
+        f"{job.current_row_count:,}" if job.current_row_count_known else "Waiting...",
+    )
+
+    if job.analytics_updated_at_utc:
+        st.caption(
+            "Analytics last refreshed at "
+            f"{job.analytics_updated_at_utc}. The backend refreshes the snapshot "
+            "every 30 seconds while the loader runs."
+        )
+    if job.analytics_error:
+        st.warning(
+            "The loader continues running, but the latest cost analytics query failed: "
+            f"{job.analytics_error}"
+        )
+
+    st.markdown("#### Monthly effective cost")
+    st.caption(
+        "Totals use CHARGE_PERIOD_START and EFFECTIVE_COST across all loaded tenancy "
+        "rows. Billing currencies are kept separate to avoid adding unlike currencies."
+    )
+    if job.monthly_costs:
+        st.dataframe(
+            [
+                {
+                    "Month": cost.month,
+                    "Billing currency": cost.billing_currency,
+                    "Total effective cost": cost.effective_cost,
+                }
+                for cost in job.monthly_costs
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+    elif not job.analytics_error:
+        st.info("No rows with CHARGE_PERIOD_START are currently available.")
+
+    st.markdown("#### Unique services")
+    if job.services:
+        st.dataframe(
+            [
+                {"Position": index, "Service name": service}
+                for index, service in enumerate(job.services, start=1)
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+    elif not job.analytics_error:
+        st.info("No non-empty SERVICE_NAME values are currently available.")
+
+
+def render_cost_analytics(api_url: str) -> None:
+    st.subheader("Tenancy cost analytics")
+    st.caption(
+        "Shows a read-only snapshot from TEMP_OCI_FOCUS for the current or most "
+        "recent GUI-started loader job. No SQL, table name, or credential is accepted "
+        "from this tab."
+    )
+
+    active_job_id = st.session_state.get("loader_job_id")
+    if isinstance(active_job_id, str) and active_job_id:
+
+        @st.fragment(run_every="10s")
+        def poll_cost_analytics() -> None:
+            try:
+                job = FocusAPIClient(api_url, timeout_seconds=15.0).loader_job(
+                    active_job_id
+                )
+            except FocusAPIError as error:
+                st.error(str(error))
+                return
+            st.session_state["loader_job_last"] = job
+            render_cost_analytics_snapshot(job)
+
+        poll_cost_analytics()
+        return
+
+    last_job = st.session_state.get("loader_job_last")
+    if isinstance(last_job, LoaderJob):
+        render_cost_analytics_snapshot(last_job)
+        return
+
+    st.info(
+        "Start a loader job in the Execute loader tab. Monthly costs and unique "
+        "services will appear here and refresh as committed rows become visible."
+    )
+
+
 def render_diagnostics(
     api_url: str,
     health: Health,
@@ -801,7 +894,15 @@ def main() -> None:
     tab_labels = ["Database tables"]
     if show_deployment_tab:
         tab_labels.append("Deploy schema")
-    tab_labels.extend(["Connection", "Command builder", "Execute loader", "Diagnostics"])
+    tab_labels.extend(
+        [
+            "Connection",
+            "Command builder",
+            "Execute loader",
+            "Cost analytics",
+            "Diagnostics",
+        ]
+    )
     tabs = st.tabs(tab_labels)
 
     tab_index = 0
@@ -820,6 +921,9 @@ def main() -> None:
     tab_index += 1
     with tabs[tab_index]:
         render_loader_execution(api_url)
+    tab_index += 1
+    with tabs[tab_index]:
+        render_cost_analytics(api_url)
     tab_index += 1
     with tabs[tab_index]:
         render_diagnostics(

@@ -112,7 +112,10 @@ browser-supplied command, script path, TNS path, alias, config path, or SQL text
 The versioned `POST /api/v1/loader/jobs` endpoint accepts only validated
 structured loader fields, starts the fixed `FOCUS_LOADER_EXECUTABLE`, and exposes
 status at `GET /api/v1/loader/jobs/<jobId>`. Its row monitor runs only a fixed
-`COUNT(*)` query against `TEMP_OCI_FOCUS` as the configured database user.
+`COUNT(*)` query plus fixed monthly `EFFECTIVE_COST` and distinct
+`SERVICE_NAME` queries against `TEMP_OCI_FOCUS` as the configured database
+user. Analytics refresh every 30 seconds while a job runs and are returned with
+the job snapshot.
 
 Example response:
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -127,22 +128,45 @@ func TestLoaderExecutionServiceReportsRowCountIncreaseAndRedactsOutput(t *testin
 		}
 		return value, nil
 	}
+	analyticsCalls := 0
+	analyticsReader := func(
+		_ context.Context,
+		username string,
+		password string,
+		alias string,
+	) (loaderAnalyticsSnapshot, error) {
+		if username != "FOCUS_APP" || password != "runtime-test-secret" || alias != "FOCUS_HIGH" {
+			t.Fatalf("unexpected analytics credentials: %s/%s@%s", username, password, alias)
+		}
+		analyticsCalls++
+		return loaderAnalyticsSnapshot{
+			MonthlyCosts: []loaderMonthlyCost{
+				{Month: "2026-01", BillingCurrency: "USD", EffectiveCost: "123.45"},
+			},
+			Services: []string{"Compute", "Object Storage"},
+		}, nil
+	}
 	service := &loaderExecutionService{
-		getenv:     getenv,
-		runner:     runner,
-		rowCounter: rowCounter,
+		getenv:          getenv,
+		runner:          runner,
+		rowCounter:      rowCounter,
+		analyticsReader: analyticsReader,
 		passwordResolver: func(context.Context, loaderExecutionRequest) (string, error) {
 			t.Fatal("Vault resolver must not be called for direct-password execution")
 			return "", nil
 		},
-		pollInterval: time.Hour,
-		timeout:      time.Minute,
-		retention:    time.Hour,
-		jobs:         make(map[string]*loaderExecutionJob),
+		pollInterval:      time.Hour,
+		analyticsInterval: time.Hour,
+		timeout:           time.Minute,
+		retention:         time.Hour,
+		jobs:              make(map[string]*loaderExecutionJob),
 	}
 	started, err := service.start(testLoaderExecutionRequest())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if started.MonthlyCosts == nil || started.Services == nil {
+		t.Fatalf("starting response must use empty analytics arrays: %#v", started)
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	var finished loaderExecutionResponse
@@ -161,6 +185,11 @@ func TestLoaderExecutionServiceReportsRowCountIncreaseAndRedactsOutput(t *testin
 		!finished.RowsInsertedKnown || finished.RowsInserted != 25 {
 		t.Fatalf("unexpected row counts: %#v", finished)
 	}
+	if analyticsCalls != 2 || len(finished.MonthlyCosts) != 1 ||
+		finished.MonthlyCosts[0].EffectiveCost != "123.45" || len(finished.Services) != 2 ||
+		finished.AnalyticsUpdatedAtUTC == "" || finished.AnalyticsError != "" {
+		t.Fatalf("unexpected analytics snapshot: calls=%d response=%#v", analyticsCalls, finished)
+	}
 	if strings.Contains(finished.Output, "runtime-test-secret") || !strings.Contains(finished.Output, "[REDACTED]") {
 		t.Fatalf("loader output was not redacted: %q", finished.Output)
 	}
@@ -174,6 +203,32 @@ func TestLoaderExecutionServiceReportsRowCountIncreaseAndRedactsOutput(t *testin
 	defer countMu.Unlock()
 	if counterUser != "FOCUS_APP" || counterPassword != "runtime-test-secret" || counterAlias != "FOCUS_HIGH" {
 		t.Fatalf("unexpected row counter credentials: %s/%s@%s", counterUser, counterPassword, counterAlias)
+	}
+}
+
+func TestLoaderAnalyticsErrorRedactsDatabasePassword(t *testing.T) {
+	service := &loaderExecutionService{
+		analyticsReader: func(
+			context.Context,
+			string,
+			string,
+			string,
+		) (loaderAnalyticsSnapshot, error) {
+			return loaderAnalyticsSnapshot{}, errors.New("query failed with runtime-secret")
+		},
+		jobs: map[string]*loaderExecutionJob{
+			"test-job": {id: "test-job", status: "running"},
+		},
+	}
+	service.refreshAnalytics(context.Background(), "test-job", loaderExecutionInput{
+		DatabaseUser:    "FOCUS_APP",
+		MonitorPassword: "runtime-secret",
+		DatabaseAlias:   "FOCUS_HIGH",
+	})
+	response, ok := service.snapshot("test-job")
+	if !ok || strings.Contains(response.AnalyticsError, "runtime-secret") ||
+		!strings.Contains(response.AnalyticsError, "[REDACTED]") {
+		t.Fatalf("analytics error was not safely redacted: %#v", response)
 	}
 }
 

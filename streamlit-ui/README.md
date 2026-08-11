@@ -43,6 +43,8 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
 - A separate **Execute loader** tab that starts one validated job through the
   fixed backend executable and refreshes `TEMP_OCI_FOCUS` total/delta metrics
   every five seconds.
+- A **Cost analytics** tab that refreshes monthly `EFFECTIVE_COST` totals and
+  the unique `SERVICE_NAME` list while committed loader rows become visible.
 - Diagnostics page with local API commands and non-secret backend metadata.
 - Python unit tests, Go API/parser tests, a systemd service, an automated
   installer, and a deployed-service smoke-test script.
@@ -73,7 +75,7 @@ flowchart LR
     Builder["Validated command preview"]
     Execute["Fixed-binary job API<br/>one job at a time"]
     Loader["Child Go loader"]
-    DB["Oracle Database<br/>metadata and row count"]
+    DB["Oracle Database<br/>metadata, row count, and cost analytics"]
     Script["Fixed sql_scripts deployment file"]
     OCI["OCI and Autonomous Database"]
 
@@ -84,6 +86,7 @@ flowchart LR
     API -->|"one-use authorization"| Script --> DB
     UI --> Builder --> Execute --> Loader --> OCI
     Execute -->|"COUNT TEMP_OCI_FOCUS every 5s"| DB
+    Execute -->|"Fixed monthly cost and service queries every 30s"| DB
 ```
 
 The Streamlit process never reads the wallet or `tnsnames.ora`. The selected Go process
@@ -97,7 +100,9 @@ passes both passwords through an anonymous inherited file descriptor instead of
 command arguments or environment values, redacts both passwords from output,
 and uses the new schema's password for the final fixed table query. The loader
 job API separately revalidates builder fields, starts only the configured
-binary, and uses fixed current-schema row-count SQL while the job runs. The API
+binary, and uses fixed current-schema row-count and analytics SQL while the job
+runs. Cost totals are grouped by `CHARGE_PERIOD_START` month and
+`BILLING_CURRENCY`; unique services come from `SERVICE_NAME`. The API
 URLs come from server-side environment variables and cannot be changed by a
 browser user. Changing the execution identity clears database authorization,
 schema results, built commands, and loader-job state so credentials/results
@@ -144,7 +149,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.9.0-loader-execution-ui"
+  "version": "26.10.0-monthly-cost-analytics"
 }
 ```
 
@@ -285,8 +290,14 @@ The response reports `starting`, `running`, `succeeded`, `failed`, or
 `initialRowCount`, `currentRowCount`, and `rowsInserted` values with availability
 flags. `rowsInserted` is the current `TEMP_OCI_FOCUS` count minus the count read
 immediately before the child loader starts. Oracle commits become visible on
-subsequent five-second polls. Only one loader job can run at a time, jobs time
-out after 24 hours, and completed status is retained in memory for two hours.
+subsequent five-second polls. The same response includes `monthlyCosts`,
+`services`, `analyticsUpdatedAtUtc`, and `analyticsError`. The backend refreshes
+analytics every 30 seconds while the job runs and once after it finishes.
+Monthly entries contain `month`, `billingCurrency`, and a decimal-string
+`effectiveCost`; preserving the value as a string avoids binary floating-point
+rounding. Only one loader job can run at a time, jobs time out after 24 hours,
+and completed status and its final analytics snapshot are retained in memory
+for two hours.
 
 ## Oracle Linux 8 prerequisites
 
@@ -320,7 +331,7 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 
 ## 1. Build and install the updated Go backend
 
-The execution tab and live row counter require the `26.9.0-loader-execution-ui`
+The execution and cost tabs require the `26.10.0-monthly-cost-analytics`
 Go API and UI to be installed together.
 
 ```bash
@@ -337,7 +348,7 @@ dist/focus-loader-report-upload-linux-amd64 -version
 Expected version:
 
 ```text
-focus-loader-report-upload 26.9.0-loader-execution-ui
+focus-loader-report-upload 26.10.0-monthly-cost-analytics
 ```
 
 ## 2. Verify TNS permissions
@@ -667,6 +678,27 @@ process argument. Only one job can be active. The count reflects committed rows,
 so it can advance in batches after SQL*Loader commits rather than on every CSV
 record.
 
+### Cost analytics tab
+
+1. Start a job from **Execute loader**.
+2. Open **Cost analytics**. The UI polls the existing opaque job result every
+   ten seconds; the backend recomputes its database snapshot every 30 seconds.
+3. Review the monthly table. Each row contains the charge month, billing
+   currency, and total effective cost for all currently committed
+   `TEMP_OCI_FOCUS` rows.
+4. Review the sorted, unique service-name table and the current loaded-row
+   metric.
+5. After the loader finishes, the final snapshot remains available with the job
+   result for up to two hours or until the backend service restarts.
+
+The tab is intentionally tied to the current or most recent GUI-started loader
+job, so it reuses only the credential already held by the active backend row
+monitor. It has no password field and cannot submit SQL, a table name, a schema,
+or another connection alias. If multiple billing currencies exist, they remain
+separate; the UI never adds unlike currencies together. Rows with a null
+`CHARGE_PERIOD_START` are excluded, null `EFFECTIVE_COST` values count as zero,
+and null/blank `SERVICE_NAME` values are omitted.
+
 ### Diagnostics tab
 
 Use this page to copy local health commands and review non-secret API metadata.
@@ -926,8 +958,8 @@ curl -v http://127.0.0.1:8081/api/v1/health
 sudo grep '^FOCUS_API_URL' /etc/focus-loader/streamlit.env
 ```
 
-An older binary does not have `/api/v1/schema/deploy`; install the
-`26.9.0-loader-execution-ui` binary before using the current interface.
+An older binary does not return loader cost analytics; install the
+`26.10.0-monthly-cost-analytics` binary before using the current interface.
 
 ### The alias endpoint returns an error
 
@@ -1060,9 +1092,14 @@ directory to roll back application code.
   24-hour timeout.
 - Direct execution passwords are passed to the child through stdin instead of
   arguments. The backend keeps the effective direct/Vault password only while
-  the job needs live row-count monitoring and never returns it to Streamlit.
-- The row monitor executes only fixed `SELECT COUNT(*) FROM TEMP_OCI_FOCUS` SQL
-  as the configured database user; the browser cannot supply SQL or a table.
+  the job needs live row-count and analytics monitoring and never returns it to
+  Streamlit.
+- The monitor executes only fixed row-count, monthly-effective-cost, and
+  distinct-service SQL against `TEMP_OCI_FOCUS` as the configured database
+  user; the browser cannot supply SQL, a table, a schema, or an alias.
+- Analytics errors are password-redacted and do not stop the loader. Only the
+  resulting cost/service snapshot—not the credential—is retained with the
+  completed job result.
 - Shell arguments are represented as an argument list and POSIX-quoted.
 - The Streamlit service and one backend run as `focusloader`; the second backend
   runs as `oracle` only when explicitly selected in the UI. Both backend units

@@ -66,7 +66,7 @@ func runTNSGUI(ctx context.Context, listenAddress string) error {
 		fmt.Println("WARNING: the TNS GUI has no built-in authentication; use a firewall or reverse proxy before exposing it")
 	}
 	fmt.Printf("TNS GUI listening on http://%s\n", listener.Addr().String())
-	fmt.Println("The service reads TNS aliases, lists schema tables, deploys the fixed schema, and runs validated loader jobs.")
+	fmt.Println("The service reads TNS aliases, lists schema tables, deploys the fixed schema, runs validated loader jobs, and reports fixed cost analytics.")
 
 	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()

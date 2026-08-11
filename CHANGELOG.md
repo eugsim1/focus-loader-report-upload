@@ -1,5 +1,22 @@
 # Changelog
 
+## 26.10.0-monthly-cost-analytics
+
+- Added a Streamlit **Cost analytics** tab for the current or most recent
+  GUI-started loader job, showing monthly `EFFECTIVE_COST` totals derived from
+  `CHARGE_PERIOD_START` and a sorted unique `SERVICE_NAME` table.
+- Group monthly totals by billing currency so unlike currencies are never added
+  together, preserve Oracle numeric totals as decimal strings, and show the
+  committed `TEMP_OCI_FOCUS` row count beside the analytics tables.
+- Extended the existing server-side loader monitor with fixed, read-only SQL
+  refreshed every 30 seconds and a final snapshot at job completion; the
+  browser cannot submit SQL, table names, or another credential.
+- Retain only the resulting analytics snapshot with the existing two-hour job
+  result, redact database errors, and keep database credentials limited to the
+  active loader execution lifetime.
+- Expanded Go, API-client, Streamlit, installation, operations, and security
+  tests/documentation for the new release.
+
 ## 26.9.3-streamlit-redeployment-runbook
 
 - Added a complete Oracle Linux redeployment runbook covering configuration

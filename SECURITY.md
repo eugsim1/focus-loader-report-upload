@@ -28,11 +28,13 @@ Do not report suspected vulnerabilities in a public issue. Use GitHub's private 
 - The execution tab asks for a direct password again, sends it only over the
   protected loopback connection, and the Go backend passes it to the child over
   stdin rather than command arguments. Direct or Vault-resolved passwords remain
-  in backend memory only while required for execution/row monitoring and are
+  in backend memory only while required for execution/row/analytics monitoring and are
   redacted from bounded final output.
-- Live monitoring runs only fixed `SELECT COUNT(*) FROM TEMP_OCI_FOCUS` SQL as
-  the selected database user. It reports committed total rows and the delta from
-  the pre-run baseline; it never accepts browser-supplied SQL/table names.
+- Live monitoring runs only fixed row-count, monthly-effective-cost, and
+  distinct-service queries against `TEMP_OCI_FOCUS` as the selected database
+  user. It reports committed rows, monthly totals grouped by billing currency,
+  and unique services; it never accepts browser-supplied SQL, table names,
+  schemas, or aliases.
 - Enter database passwords only in masked forms over
   the protected loopback SSH/OCI Bastion path. Never enter a private key, wallet
   content, OCI API key, or Vault secret value in the Streamlit interface.

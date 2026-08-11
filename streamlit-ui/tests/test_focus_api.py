@@ -29,10 +29,12 @@ class RecordingOpener:
 
 class FocusAPIClientTests(unittest.TestCase):
     def test_health(self):
-        opener = RecordingOpener({"status": "ok", "version": "26.9.0-loader-execution-ui"})
+        opener = RecordingOpener(
+            {"status": "ok", "version": "26.10.0-monthly-cost-analytics"}
+        )
         result = FocusAPIClient("http://127.0.0.1:8080/", opener=opener).health()
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.version, "26.9.0-loader-execution-ui")
+        self.assertEqual(result.version, "26.10.0-monthly-cost-analytics")
         self.assertEqual(opener.urls[0][0], "http://127.0.0.1:8080/api/v1/health")
 
     def test_aliases(self):
@@ -165,6 +167,16 @@ class FocusAPIClientTests(unittest.TestCase):
                 "rowsInsertedKnown": True,
                 "rowCountUpdatedAtUtc": "2026-08-10T12:00:05Z",
                 "rowCountError": "",
+                "monthlyCosts": [
+                    {
+                        "month": "2026-01",
+                        "billingCurrency": "USD",
+                        "effectiveCost": "123.45",
+                    }
+                ],
+                "services": ["Compute", "Object Storage"],
+                "analyticsUpdatedAtUtc": "2026-08-10T12:00:05Z",
+                "analyticsError": "",
                 "output": "",
                 "error": "",
             }
@@ -179,6 +191,8 @@ class FocusAPIClientTests(unittest.TestCase):
         self.assertEqual(result.rows_inserted, 25)
         self.assertEqual(result.current_row_count, 125)
         self.assertFalse(result.terminal)
+        self.assertEqual(result.monthly_costs[0].effective_cost, "123.45")
+        self.assertEqual(result.services, ("Compute", "Object Storage"))
         request = opener.requests[0]
         self.assertEqual(request.method, "POST")
         self.assertEqual(request.full_url, "http://127.0.0.1:8080/api/v1/loader/jobs")
@@ -204,6 +218,10 @@ class FocusAPIClientTests(unittest.TestCase):
                 "rowsInsertedKnown": True,
                 "rowCountUpdatedAtUtc": "2026-08-10T12:01:00Z",
                 "rowCountError": "",
+                "monthlyCosts": [],
+                "services": [],
+                "analyticsUpdatedAtUtc": "2026-08-10T12:01:00Z",
+                "analyticsError": "",
                 "output": "Completed",
                 "error": "",
             }

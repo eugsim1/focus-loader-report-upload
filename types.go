@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.9.0-loader-execution-ui"
+	version       = "26.10.0-monthly-cost-analytics"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

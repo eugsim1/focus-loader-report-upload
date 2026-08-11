@@ -23,6 +23,8 @@ const (
 	loaderJobRetention         = 2 * time.Hour
 	loaderRowCountInterval     = 5 * time.Second
 	loaderRowCountTimeout      = 20 * time.Second
+	loaderAnalyticsInterval    = 30 * time.Second
+	loaderAnalyticsTimeout     = 25 * time.Second
 	maxLoaderJobRequestBytes   = 64 * 1024
 	maxLoaderJobOutputBytes    = 512 * 1024
 	maxLoaderJobFieldBytes     = 4096
@@ -69,24 +71,28 @@ type loaderExecutionRequest struct {
 }
 
 type loaderExecutionResponse struct {
-	JobID                string `json:"jobId"`
-	Status               string `json:"status"`
-	DatabaseUser         string `json:"databaseUser"`
-	DatabaseAlias        string `json:"databaseAlias"`
-	TableName            string `json:"tableName"`
-	StartedAtUTC         string `json:"startedAtUtc"`
-	FinishedAtUTC        string `json:"finishedAtUtc"`
-	ExitCode             *int   `json:"exitCode"`
-	InitialRowCount      int64  `json:"initialRowCount"`
-	InitialRowCountKnown bool   `json:"initialRowCountKnown"`
-	CurrentRowCount      int64  `json:"currentRowCount"`
-	CurrentRowCountKnown bool   `json:"currentRowCountKnown"`
-	RowsInserted         int64  `json:"rowsInserted"`
-	RowsInsertedKnown    bool   `json:"rowsInsertedKnown"`
-	RowCountUpdatedAtUTC string `json:"rowCountUpdatedAtUtc"`
-	RowCountError        string `json:"rowCountError"`
-	Output               string `json:"output"`
-	Error                string `json:"error"`
+	JobID                 string              `json:"jobId"`
+	Status                string              `json:"status"`
+	DatabaseUser          string              `json:"databaseUser"`
+	DatabaseAlias         string              `json:"databaseAlias"`
+	TableName             string              `json:"tableName"`
+	StartedAtUTC          string              `json:"startedAtUtc"`
+	FinishedAtUTC         string              `json:"finishedAtUtc"`
+	ExitCode              *int                `json:"exitCode"`
+	InitialRowCount       int64               `json:"initialRowCount"`
+	InitialRowCountKnown  bool                `json:"initialRowCountKnown"`
+	CurrentRowCount       int64               `json:"currentRowCount"`
+	CurrentRowCountKnown  bool                `json:"currentRowCountKnown"`
+	RowsInserted          int64               `json:"rowsInserted"`
+	RowsInsertedKnown     bool                `json:"rowsInsertedKnown"`
+	RowCountUpdatedAtUTC  string              `json:"rowCountUpdatedAtUtc"`
+	RowCountError         string              `json:"rowCountError"`
+	MonthlyCosts          []loaderMonthlyCost `json:"monthlyCosts"`
+	Services              []string            `json:"services"`
+	AnalyticsUpdatedAtUTC string              `json:"analyticsUpdatedAtUtc"`
+	AnalyticsError        string              `json:"analyticsError"`
+	Output                string              `json:"output"`
+	Error                 string              `json:"error"`
 }
 
 type loaderExecutionInput struct {
@@ -110,34 +116,40 @@ type loaderRowCounter func(context.Context, string, string, string) (int64, erro
 type loaderPasswordResolver func(context.Context, loaderExecutionRequest) (string, error)
 
 type loaderExecutionJob struct {
-	id                   string
-	status               string
-	databaseUser         string
-	databaseAlias        string
-	startedAtUTC         time.Time
-	finishedAtUTC        time.Time
-	exitCode             *int
-	initialRowCount      int64
-	initialRowCountKnown bool
-	currentRowCount      int64
-	currentRowCountKnown bool
-	rowsInserted         int64
-	rowsInsertedKnown    bool
-	rowCountUpdatedAtUTC time.Time
-	rowCountError        string
-	output               *boundedDeploymentOutput
-	finalOutput          string
-	errorMessage         string
+	id                    string
+	status                string
+	databaseUser          string
+	databaseAlias         string
+	startedAtUTC          time.Time
+	finishedAtUTC         time.Time
+	exitCode              *int
+	initialRowCount       int64
+	initialRowCountKnown  bool
+	currentRowCount       int64
+	currentRowCountKnown  bool
+	rowsInserted          int64
+	rowsInsertedKnown     bool
+	rowCountUpdatedAtUTC  time.Time
+	rowCountError         string
+	monthlyCosts          []loaderMonthlyCost
+	services              []string
+	analyticsUpdatedAtUTC time.Time
+	analyticsError        string
+	output                *boundedDeploymentOutput
+	finalOutput           string
+	errorMessage          string
 }
 
 type loaderExecutionService struct {
-	getenv           func(string) string
-	runner           loaderExecutionRunner
-	rowCounter       loaderRowCounter
-	passwordResolver loaderPasswordResolver
-	pollInterval     time.Duration
-	timeout          time.Duration
-	retention        time.Duration
+	getenv            func(string) string
+	runner            loaderExecutionRunner
+	rowCounter        loaderRowCounter
+	analyticsReader   loaderAnalyticsReader
+	passwordResolver  loaderPasswordResolver
+	pollInterval      time.Duration
+	analyticsInterval time.Duration
+	timeout           time.Duration
+	retention         time.Duration
 
 	mu       sync.Mutex
 	jobs     map[string]*loaderExecutionJob
@@ -153,14 +165,16 @@ func (err loaderExecutionAPIError) Error() string { return err.message }
 
 func newLoaderExecutionService(getenv func(string) string) *loaderExecutionService {
 	return &loaderExecutionService{
-		getenv:           getenv,
-		runner:           runLoaderExecutionProcess,
-		rowCounter:       countOracleTempFocusRows,
-		passwordResolver: resolveLoaderExecutionPassword,
-		pollInterval:     loaderRowCountInterval,
-		timeout:          loaderJobTimeout,
-		retention:        loaderJobRetention,
-		jobs:             make(map[string]*loaderExecutionJob),
+		getenv:            getenv,
+		runner:            runLoaderExecutionProcess,
+		rowCounter:        countOracleTempFocusRows,
+		analyticsReader:   readOracleTempFocusAnalytics,
+		passwordResolver:  resolveLoaderExecutionPassword,
+		pollInterval:      loaderRowCountInterval,
+		analyticsInterval: loaderAnalyticsInterval,
+		timeout:           loaderJobTimeout,
+		retention:         loaderJobRetention,
+		jobs:              make(map[string]*loaderExecutionJob),
 	}
 }
 
@@ -328,14 +342,19 @@ func (service *loaderExecutionService) run(jobID string, input loaderExecutionIn
 	monitorDone := make(chan struct{})
 	go func() {
 		defer close(monitorDone)
-		ticker := time.NewTicker(service.pollInterval)
-		defer ticker.Stop()
+		service.refreshAnalytics(monitorContext, jobID, input)
+		rowTicker := time.NewTicker(service.pollInterval)
+		analyticsTicker := time.NewTicker(service.analyticsInterval)
+		defer rowTicker.Stop()
+		defer analyticsTicker.Stop()
 		for {
 			select {
 			case <-monitorContext.Done():
 				return
-			case <-ticker.C:
+			case <-rowTicker.C:
 				service.refreshRowCount(monitorContext, jobID, input, false)
+			case <-analyticsTicker.C:
+				service.refreshAnalytics(monitorContext, jobID, input)
 			}
 		}
 	}()
@@ -346,6 +365,9 @@ func (service *loaderExecutionService) run(jobID string, input loaderExecutionIn
 	finalCountContext, finalCountCancel := context.WithTimeout(context.Background(), loaderRowCountTimeout)
 	service.refreshRowCount(finalCountContext, jobID, input, false)
 	finalCountCancel()
+	finalAnalyticsContext, finalAnalyticsCancel := context.WithTimeout(context.Background(), loaderAnalyticsTimeout)
+	service.refreshAnalytics(finalAnalyticsContext, jobID, input)
+	finalAnalyticsCancel()
 
 	finishedAt := time.Now().UTC()
 	finalOutput := redactDatabasePasswords(job.output.String(), input.MonitorPassword, input.VaultSecretOCID)
@@ -384,6 +406,40 @@ func (service *loaderExecutionService) run(jobID string, input loaderExecutionIn
 			delete(service.jobs, jobID)
 		}
 	})
+}
+
+func (service *loaderExecutionService) refreshAnalytics(
+	parent context.Context,
+	jobID string,
+	input loaderExecutionInput,
+) {
+	if service.analyticsReader == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, loaderAnalyticsTimeout)
+	defer cancel()
+	snapshot, err := service.analyticsReader(
+		ctx,
+		input.DatabaseUser,
+		input.MonitorPassword,
+		input.DatabaseAlias,
+	)
+	now := time.Now().UTC()
+
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	job, ok := service.jobs[jobID]
+	if !ok {
+		return
+	}
+	if err != nil {
+		job.analyticsError = redactDatabasePassword(err.Error(), input.MonitorPassword)
+		return
+	}
+	job.monthlyCosts = append([]loaderMonthlyCost(nil), snapshot.MonthlyCosts...)
+	job.services = append([]string(nil), snapshot.Services...)
+	job.analyticsUpdatedAtUTC = now
+	job.analyticsError = ""
 }
 
 func (service *loaderExecutionService) refreshRowCount(
@@ -432,25 +488,37 @@ func (service *loaderExecutionService) snapshotLocked(jobID string) (loaderExecu
 	if !ok {
 		return loaderExecutionResponse{}, false
 	}
+	monthlyCosts := append([]loaderMonthlyCost(nil), job.monthlyCosts...)
+	if monthlyCosts == nil {
+		monthlyCosts = []loaderMonthlyCost{}
+	}
+	services := append([]string(nil), job.services...)
+	if services == nil {
+		services = []string{}
+	}
 	return loaderExecutionResponse{
-		JobID:                job.id,
-		Status:               job.status,
-		DatabaseUser:         job.databaseUser,
-		DatabaseAlias:        job.databaseAlias,
-		TableName:            loaderTargetTableName,
-		StartedAtUTC:         formatOptionalLoaderTime(job.startedAtUTC),
-		FinishedAtUTC:        formatOptionalLoaderTime(job.finishedAtUTC),
-		ExitCode:             job.exitCode,
-		InitialRowCount:      job.initialRowCount,
-		InitialRowCountKnown: job.initialRowCountKnown,
-		CurrentRowCount:      job.currentRowCount,
-		CurrentRowCountKnown: job.currentRowCountKnown,
-		RowsInserted:         job.rowsInserted,
-		RowsInsertedKnown:    job.rowsInsertedKnown,
-		RowCountUpdatedAtUTC: formatOptionalLoaderTime(job.rowCountUpdatedAtUTC),
-		RowCountError:        job.rowCountError,
-		Output:               job.finalOutput,
-		Error:                job.errorMessage,
+		JobID:                 job.id,
+		Status:                job.status,
+		DatabaseUser:          job.databaseUser,
+		DatabaseAlias:         job.databaseAlias,
+		TableName:             loaderTargetTableName,
+		StartedAtUTC:          formatOptionalLoaderTime(job.startedAtUTC),
+		FinishedAtUTC:         formatOptionalLoaderTime(job.finishedAtUTC),
+		ExitCode:              job.exitCode,
+		InitialRowCount:       job.initialRowCount,
+		InitialRowCountKnown:  job.initialRowCountKnown,
+		CurrentRowCount:       job.currentRowCount,
+		CurrentRowCountKnown:  job.currentRowCountKnown,
+		RowsInserted:          job.rowsInserted,
+		RowsInsertedKnown:     job.rowsInsertedKnown,
+		RowCountUpdatedAtUTC:  formatOptionalLoaderTime(job.rowCountUpdatedAtUTC),
+		RowCountError:         job.rowCountError,
+		MonthlyCosts:          monthlyCosts,
+		Services:              services,
+		AnalyticsUpdatedAtUTC: formatOptionalLoaderTime(job.analyticsUpdatedAtUTC),
+		AnalyticsError:        job.analyticsError,
+		Output:                job.finalOutput,
+		Error:                 job.errorMessage,
 	}, true
 }
 

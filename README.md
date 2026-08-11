@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.9.0-loader-execution-ui`
+Version `26.10.0-monthly-cost-analytics`
 
 > **Independent project disclaimer**
 >
@@ -117,6 +117,9 @@ Current interactions include:
 - a separate Execute loader tab that runs the validated settings through the
   fixed backend executable and refreshes `TEMP_OCI_FOCUS` row totals every five
   seconds, including the increase from the pre-run baseline.
+- a Cost analytics tab that refreshes monthly `EFFECTIVE_COST` totals grouped by
+  `CHARGE_PERIOD_START` month and billing currency, plus the sorted unique
+  `SERVICE_NAME` list, while the loader inserts committed rows.
 
 The command-builder tab does not execute by itself. Its default direct-password
 form is masked and cleared; the preview and downloaded file never contain that
@@ -135,7 +138,7 @@ rewrites copied key/token paths, and provisions separate loopback services. All
 services are reached through SSH/OCI Bastion or an authenticated TLS reverse
 proxy.
 
-Quick deployment after installing the `26.9.0-loader-execution-ui` Go binary:
+Quick deployment after installing the `26.10.0-monthly-cost-analytics` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip

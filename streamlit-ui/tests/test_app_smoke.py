@@ -25,13 +25,44 @@ class StreamlitAppSmokeTests(unittest.TestCase):
         class BackendHandler(BaseHTTPRequestHandler):
             def do_GET(self):
                 if self.path == "/api/v1/health":
-                    payload = {"status": "ok", "version": "26.9.0-loader-execution-ui"}
+                    payload = {"status": "ok", "version": "26.10.0-monthly-cost-analytics"}
                 elif self.path == "/api/v1/tns/aliases":
                     payload = {
                         "aliases": ["FOCUS_HIGH", "FOCUS_LOW"],
                         "firstAlias": "FOCUS_HIGH",
                         "sourcePath": "/opt/oracle/wallet/tnsnames.ora",
                         "readAtUtc": "2026-08-10T12:00:00Z",
+                    }
+                elif self.path == "/api/v1/loader/jobs/analytics-job":
+                    payload = {
+                        "jobId": "analytics-job",
+                        "status": "running",
+                        "databaseUser": "FOCUS_APP",
+                        "databaseAlias": "FOCUS_HIGH",
+                        "tableName": "TEMP_OCI_FOCUS",
+                        "startedAtUtc": "2026-08-10T12:00:00Z",
+                        "finishedAtUtc": "",
+                        "exitCode": None,
+                        "initialRowCount": 100,
+                        "initialRowCountKnown": True,
+                        "currentRowCount": 125,
+                        "currentRowCountKnown": True,
+                        "rowsInserted": 25,
+                        "rowsInsertedKnown": True,
+                        "rowCountUpdatedAtUtc": "2026-08-10T12:00:05Z",
+                        "rowCountError": "",
+                        "monthlyCosts": [
+                            {
+                                "month": "2026-01",
+                                "billingCurrency": "USD",
+                                "effectiveCost": "123.45",
+                            }
+                        ],
+                        "services": ["Compute", "Object Storage"],
+                        "analyticsUpdatedAtUtc": "2026-08-10T12:00:05Z",
+                        "analyticsError": "",
+                        "output": "",
+                        "error": "",
                     }
                 else:
                     self.send_error(404)
@@ -71,6 +102,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.assertEqual(app.tabs[0].label, "Database tables")
                 self.assertNotIn("Deploy schema", [tab.label for tab in app.tabs])
                 self.assertIn("Execute loader", [tab.label for tab in app.tabs])
+                self.assertIn("Cost analytics", [tab.label for tab in app.tabs])
                 requested_defaults = {
                     "Pre-load report (-preload-report)": True,
                     "Continue after report (-continue-after-report)": True,
@@ -99,6 +131,17 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.assertNotIn(
                     "Destructive-action confirmation",
                     [text_input.label for text_input in app.text_input],
+                )
+
+                app.session_state["loader_job_id"] = "analytics-job"
+                app.run()
+                self.assertEqual(len(app.exception), 0)
+                metric_values = {metric.label: metric.value for metric in app.metric}
+                self.assertEqual(metric_values.get("Unique services"), "2")
+                self.assertEqual(metric_values.get("Month/currency rows"), "1")
+                self.assertIn(
+                    "Tenancy cost analytics",
+                    [subheader.value for subheader in app.subheader],
                 )
 
                 execution_selector.select("oracle").run()

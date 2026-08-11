@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
@@ -62,6 +63,13 @@ class SchemaDeployment:
 
 
 @dataclass(frozen=True)
+class MonthlyEffectiveCost:
+    month: str
+    billing_currency: str
+    effective_cost: str
+
+
+@dataclass(frozen=True)
 class LoaderJob:
     job_id: str
     status: str
@@ -79,6 +87,10 @@ class LoaderJob:
     rows_inserted_known: bool
     row_count_updated_at_utc: str
     row_count_error: str
+    monthly_costs: tuple[MonthlyEffectiveCost, ...]
+    services: tuple[str, ...]
+    analytics_updated_at_utc: str
+    analytics_error: str
     output: str
     error: str
 
@@ -257,6 +269,45 @@ class FocusAPIClient:
             not isinstance(exit_code, int) or isinstance(exit_code, bool)
         ):
             raise FocusAPIError("The Go API returned an invalid loader exit code.")
+        raw_monthly_costs = payload.get("monthlyCosts")
+        if not isinstance(raw_monthly_costs, list):
+            raise FocusAPIError("The Go API returned an invalid monthly cost list.")
+        monthly_costs: list[MonthlyEffectiveCost] = []
+        for raw_cost in raw_monthly_costs:
+            if not isinstance(raw_cost, dict):
+                raise FocusAPIError("The Go API returned an invalid monthly cost entry.")
+            month = self._required_string(raw_cost, "month")
+            if (
+                len(month) != 7
+                or month[4] != "-"
+                or not month[:4].isdigit()
+                or not month[5:].isdigit()
+                or not 1 <= int(month[5:]) <= 12
+            ):
+                raise FocusAPIError("The Go API returned an invalid monthly cost month.")
+            effective_cost = self._required_string(raw_cost, "effectiveCost")
+            try:
+                parsed_cost = Decimal(effective_cost)
+            except InvalidOperation as error:
+                raise FocusAPIError(
+                    "The Go API returned an invalid monthly effective cost."
+                ) from error
+            if not parsed_cost.is_finite():
+                raise FocusAPIError("The Go API returned a non-finite monthly effective cost.")
+            monthly_costs.append(
+                MonthlyEffectiveCost(
+                    month=month,
+                    billing_currency=self._required_string(
+                        raw_cost, "billingCurrency"
+                    ),
+                    effective_cost=effective_cost,
+                )
+            )
+        raw_services = payload.get("services")
+        if not isinstance(raw_services, list) or not all(
+            isinstance(service, str) and service for service in raw_services
+        ):
+            raise FocusAPIError("The Go API returned an invalid unique service list.")
         return LoaderJob(
             job_id=self._required_string(payload, "jobId"),
             status=status,
@@ -278,6 +329,12 @@ class FocusAPIClient:
             rows_inserted_known=self._required_bool(payload, "rowsInsertedKnown"),
             row_count_updated_at_utc=self._string(payload, "rowCountUpdatedAtUtc"),
             row_count_error=self._string(payload, "rowCountError"),
+            monthly_costs=tuple(monthly_costs),
+            services=tuple(raw_services),
+            analytics_updated_at_utc=self._string(
+                payload, "analyticsUpdatedAtUtc"
+            ),
+            analytics_error=self._string(payload, "analyticsError"),
             output=self._string(payload, "output"),
             error=self._string(payload, "error"),
         )
