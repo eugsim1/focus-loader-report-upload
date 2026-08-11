@@ -30,11 +30,11 @@ class RecordingOpener:
 class FocusAPIClientTests(unittest.TestCase):
     def test_health(self):
         opener = RecordingOpener(
-            {"status": "ok", "version": "26.10.0-monthly-cost-analytics"}
+            {"status": "ok", "version": "26.10.1-empty-schema-analytics"}
         )
         result = FocusAPIClient("http://127.0.0.1:8080/", opener=opener).health()
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.version, "26.10.0-monthly-cost-analytics")
+        self.assertEqual(result.version, "26.10.1-empty-schema-analytics")
         self.assertEqual(opener.urls[0][0], "http://127.0.0.1:8080/api/v1/health")
 
     def test_aliases(self):
@@ -236,6 +236,45 @@ class FocusAPIClientTests(unittest.TestCase):
             opener.urls[0][0],
             "http://127.0.0.1:8080/api/v1/loader/jobs/safe-job-token",
         )
+
+    def test_loader_job_treats_missing_or_null_analytics_as_empty(self):
+        for analytics_fields in (
+            {},
+            {
+                "monthlyCosts": None,
+                "services": None,
+                "analyticsUpdatedAtUtc": None,
+                "analyticsError": None,
+            },
+        ):
+            payload = {
+                "jobId": "empty-schema-job",
+                "status": "starting",
+                "databaseUser": "FOCUS_APP",
+                "databaseAlias": "FOCUS_HIGH",
+                "tableName": "TEMP_OCI_FOCUS",
+                "startedAtUtc": "",
+                "finishedAtUtc": "",
+                "exitCode": None,
+                "initialRowCount": 0,
+                "initialRowCountKnown": False,
+                "currentRowCount": 0,
+                "currentRowCountKnown": False,
+                "rowsInserted": 0,
+                "rowsInsertedKnown": False,
+                "rowCountUpdatedAtUtc": "",
+                "rowCountError": "",
+                "output": "",
+                "error": "",
+                **analytics_fields,
+            }
+            result = FocusAPIClient(
+                "http://127.0.0.1:8080", opener=RecordingOpener(payload)
+            ).loader_job("empty-schema-job")
+            self.assertEqual(result.monthly_costs, ())
+            self.assertEqual(result.services, ())
+            self.assertEqual(result.analytics_updated_at_utc, "")
+            self.assertEqual(result.analytics_error, "")
 
     def test_loader_job_rejects_unsafe_job_id(self):
         with self.assertRaisesRegex(FocusAPIError, "job id"):

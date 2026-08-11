@@ -45,6 +45,7 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
   every five seconds.
 - A **Cost analytics** tab that refreshes monthly `EFFECTIVE_COST` totals and
   the unique `SERVICE_NAME` list while committed loader rows become visible.
+  Zero rows produce empty analytics and never prevent the loader from starting.
 - Diagnostics page with local API commands and non-secret backend metadata.
 - Python unit tests, Go API/parser tests, a systemd service, an automated
   installer, and a deployed-service smoke-test script.
@@ -149,7 +150,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.10.0-monthly-cost-analytics"
+  "version": "26.10.1-empty-schema-analytics"
 }
 ```
 
@@ -295,9 +296,12 @@ subsequent five-second polls. The same response includes `monthlyCosts`,
 analytics every 30 seconds while the job runs and once after it finishes.
 Monthly entries contain `month`, `billingCurrency`, and a decimal-string
 `effectiveCost`; preserving the value as a string avoids binary floating-point
-rounding. Only one loader job can run at a time, jobs time out after 24 hours,
-and completed status and its final analytics snapshot are retained in memory
-for two hours.
+rounding. When the committed row count is zero, the backend returns empty
+arrays and skips both analytics queries until rows become visible. Missing or
+`null` analytics fields from a transitional backend are also interpreted as an
+empty not-yet-populated snapshot. Only one loader job can run at a time, jobs
+time out after 24 hours, and completed status and its final analytics snapshot
+are retained in memory for two hours.
 
 ## Oracle Linux 8 prerequisites
 
@@ -331,7 +335,7 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 
 ## 1. Build and install the updated Go backend
 
-The execution and cost tabs require the `26.10.0-monthly-cost-analytics`
+The execution and cost tabs require the `26.10.1-empty-schema-analytics`
 Go API and UI to be installed together.
 
 ```bash
@@ -348,7 +352,7 @@ dist/focus-loader-report-upload-linux-amd64 -version
 Expected version:
 
 ```text
-focus-loader-report-upload 26.10.0-monthly-cost-analytics
+focus-loader-report-upload 26.10.1-empty-schema-analytics
 ```
 
 ## 2. Verify TNS permissions
@@ -697,7 +701,9 @@ monitor. It has no password field and cannot submit SQL, a table name, a schema,
 or another connection alias. If multiple billing currencies exist, they remain
 separate; the UI never adds unlike currencies together. Rows with a null
 `CHARGE_PERIOD_START` are excluded, null `EFFECTIVE_COST` values count as zero,
-and null/blank `SERVICE_NAME` values are omitted.
+and null/blank `SERVICE_NAME` values are omitted. If `TEMP_OCI_FOCUS` contains
+zero committed rows, both tables remain empty and the loader continues normally;
+analytics begin automatically after the row monitor sees the first commit.
 
 ### Diagnostics tab
 
@@ -959,7 +965,7 @@ sudo grep '^FOCUS_API_URL' /etc/focus-loader/streamlit.env
 ```
 
 An older binary does not return loader cost analytics; install the
-`26.10.0-monthly-cost-analytics` binary before using the current interface.
+`26.10.1-empty-schema-analytics` binary before using the current interface.
 
 ### The alias endpoint returns an error
 

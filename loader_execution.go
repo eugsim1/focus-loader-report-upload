@@ -292,6 +292,8 @@ func (service *loaderExecutionService) start(request loaderExecutionRequest) (lo
 		status:        "starting",
 		databaseUser:  request.DatabaseUser,
 		databaseAlias: request.DatabaseAlias,
+		monthlyCosts:  []loaderMonthlyCost{},
+		services:      []string{},
 		output: &boundedDeploymentOutput{
 			limit: maxLoaderJobOutputBytes,
 		},
@@ -416,6 +418,27 @@ func (service *loaderExecutionService) refreshAnalytics(
 	if service.analyticsReader == nil {
 		return
 	}
+	now := time.Now().UTC()
+	service.mu.Lock()
+	job, ok := service.jobs[jobID]
+	if !ok {
+		service.mu.Unlock()
+		return
+	}
+	if !job.currentRowCountKnown {
+		service.mu.Unlock()
+		return
+	}
+	if job.currentRowCount == 0 {
+		job.monthlyCosts = []loaderMonthlyCost{}
+		job.services = []string{}
+		job.analyticsUpdatedAtUTC = now
+		job.analyticsError = ""
+		service.mu.Unlock()
+		return
+	}
+	service.mu.Unlock()
+
 	ctx, cancel := context.WithTimeout(parent, loaderAnalyticsTimeout)
 	defer cancel()
 	snapshot, err := service.analyticsReader(
@@ -424,11 +447,11 @@ func (service *loaderExecutionService) refreshAnalytics(
 		input.MonitorPassword,
 		input.DatabaseAlias,
 	)
-	now := time.Now().UTC()
+	now = time.Now().UTC()
 
 	service.mu.Lock()
 	defer service.mu.Unlock()
-	job, ok := service.jobs[jobID]
+	job, ok = service.jobs[jobID]
 	if !ok {
 		return
 	}

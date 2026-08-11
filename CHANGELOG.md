@@ -1,5 +1,16 @@
 # Changelog
 
+## 26.10.1-empty-schema-analytics
+
+- Treat missing, `null`, or not-yet-populated loader analytics fields as empty
+  monthly-cost and service lists so an empty schema cannot prevent a loader job
+  from starting in Streamlit.
+- Initialize every new backend job with JSON arrays and skip the monthly-cost
+  and distinct-service SQL while the committed `TEMP_OCI_FOCUS` row count is
+  zero. Analytics resume automatically after committed rows become visible.
+- Added regression tests for empty backend tables and older/null start-response
+  analytics fields.
+
 ## 26.10.0-monthly-cost-analytics
 
 - Added a Streamlit **Cost analytics** tab for the current or most recent

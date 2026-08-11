@@ -269,7 +269,9 @@ class FocusAPIClient:
             not isinstance(exit_code, int) or isinstance(exit_code, bool)
         ):
             raise FocusAPIError("The Go API returned an invalid loader exit code.")
-        raw_monthly_costs = payload.get("monthlyCosts")
+        raw_monthly_costs = payload.get("monthlyCosts", [])
+        if raw_monthly_costs is None:
+            raw_monthly_costs = []
         if not isinstance(raw_monthly_costs, list):
             raise FocusAPIError("The Go API returned an invalid monthly cost list.")
         monthly_costs: list[MonthlyEffectiveCost] = []
@@ -303,7 +305,9 @@ class FocusAPIClient:
                     effective_cost=effective_cost,
                 )
             )
-        raw_services = payload.get("services")
+        raw_services = payload.get("services", [])
+        if raw_services is None:
+            raw_services = []
         if not isinstance(raw_services, list) or not all(
             isinstance(service, str) and service for service in raw_services
         ):
@@ -331,10 +335,10 @@ class FocusAPIClient:
             row_count_error=self._string(payload, "rowCountError"),
             monthly_costs=tuple(monthly_costs),
             services=tuple(raw_services),
-            analytics_updated_at_utc=self._string(
+            analytics_updated_at_utc=self._optional_string(
                 payload, "analyticsUpdatedAtUtc"
             ),
-            analytics_error=self._string(payload, "analyticsError"),
+            analytics_error=self._optional_string(payload, "analyticsError"),
             output=self._string(payload, "output"),
             error=self._string(payload, "error"),
         )
@@ -408,6 +412,15 @@ class FocusAPIClient:
         value = payload.get(name)
         if not isinstance(value, str):
             raise FocusAPIError(f"The Go API response is missing {name}.")
+        return value
+
+    @staticmethod
+    def _optional_string(payload: Mapping[str, Any], name: str) -> str:
+        value = payload.get(name, "")
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise FocusAPIError(f"The Go API returned an invalid {name}.")
         return value
 
     @staticmethod

@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.10.0-monthly-cost-analytics"
+	version       = "26.10.1-empty-schema-analytics"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

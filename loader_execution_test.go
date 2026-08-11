@@ -217,7 +217,12 @@ func TestLoaderAnalyticsErrorRedactsDatabasePassword(t *testing.T) {
 			return loaderAnalyticsSnapshot{}, errors.New("query failed with runtime-secret")
 		},
 		jobs: map[string]*loaderExecutionJob{
-			"test-job": {id: "test-job", status: "running"},
+			"test-job": {
+				id:                   "test-job",
+				status:               "running",
+				currentRowCount:      1,
+				currentRowCountKnown: true,
+			},
 		},
 	}
 	service.refreshAnalytics(context.Background(), "test-job", loaderExecutionInput{
@@ -229,6 +234,34 @@ func TestLoaderAnalyticsErrorRedactsDatabasePassword(t *testing.T) {
 	if !ok || strings.Contains(response.AnalyticsError, "runtime-secret") ||
 		!strings.Contains(response.AnalyticsError, "[REDACTED]") {
 		t.Fatalf("analytics error was not safely redacted: %#v", response)
+	}
+}
+
+func TestLoaderAnalyticsSkipsQueriesForEmptyTable(t *testing.T) {
+	service := &loaderExecutionService{
+		analyticsReader: func(
+			context.Context,
+			string,
+			string,
+			string,
+		) (loaderAnalyticsSnapshot, error) {
+			t.Fatal("analytics query must not run while TEMP_OCI_FOCUS is empty")
+			return loaderAnalyticsSnapshot{}, nil
+		},
+		jobs: map[string]*loaderExecutionJob{
+			"empty-job": {
+				id:                   "empty-job",
+				status:               "running",
+				currentRowCountKnown: true,
+			},
+		},
+	}
+	service.refreshAnalytics(context.Background(), "empty-job", loaderExecutionInput{})
+	response, ok := service.snapshot("empty-job")
+	if !ok || response.MonthlyCosts == nil || len(response.MonthlyCosts) != 0 ||
+		response.Services == nil || len(response.Services) != 0 ||
+		response.AnalyticsUpdatedAtUTC == "" || response.AnalyticsError != "" {
+		t.Fatalf("unexpected empty-table analytics snapshot: %#v", response)
 	}
 }
 
