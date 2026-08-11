@@ -145,6 +145,13 @@ sudo TNS_ADMIN=/opt/oracle/wallet PYTHON_BIN=python3.11 \
 ./scripts/test-streamlit-ui.sh
 ```
 
+For subsequent GitHub updates, follow the complete **Redeploy the latest
+Streamlit distribution** runbook in
+[`streamlit-ui/README.md`](streamlit-ui/README.md#8-redeploy-the-latest-streamlit-distribution).
+It includes safe `git pull`, configuration backup, CGO rebuild/tests, executable
+permissions, wallet and OCI preflight, both systemd backends, persistent SELinux
+labels for avoiding `203/EXEC`, health checks, logs, and rollback preparation.
+
 From a Windows workstation, use the included OCI Bastion launcher with the
 existing Bastion and Compute OCIDs:
 

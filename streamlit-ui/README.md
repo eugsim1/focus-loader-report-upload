@@ -699,12 +699,220 @@ Go API tests from the repository root:
 CGO_ENABLED=1 go test ./...
 ```
 
-## 8. Logs and troubleshooting
+## 8. Redeploy the latest Streamlit distribution
 
-Follow both services:
+Use this complete procedure after a new version is pushed to GitHub. The
+commands assume the repository is `/home/oracle/focus-loader-report-upload`,
+the wallet is `/home/oracle/adb_wallet`, the Streamlit service runs as
+`focusloader`, and the second Go backend runs as `oracle`. Run repository and Go
+commands as `oracle`; use `sudo` only where shown.
+
+### 8.1 Record the current version and back up installed configuration
+
+```bash
+cd /home/oracle/focus-loader-report-upload
+redeploy_stamp=$(date +%Y%m%d%H%M%S)
+backup_dir="/home/oracle/focus-loader-redeploy-backup.${redeploy_stamp}"
+install -d -m 0700 "${backup_dir}"
+sudo cp -a /etc/focus-loader "${backup_dir}/etc-focus-loader"
+sudo cp -a /opt/focus-loader/focus.conf \
+  "${backup_dir}/opt-focus.conf"
+cp -a focus.conf "${backup_dir}/oracle-focus.conf"
+cp -a sql_scripts/focus.conf "${backup_dir}/oracle-sql-scripts-focus.conf"
+sudo chown -R oracle:"$(id -gn oracle)" "${backup_dir}"
+git status --short
+git log -1 --oneline
+```
+
+Do not continue blindly when `git status` shows tracked local changes. Review
+and commit or stash them first. In particular, preserve both deployed
+`focus.conf` files; they can contain environment-specific schema/table values.
+Do not use `git clean` in a deployment checkout because untracked configuration
+or credential files may be present.
+
+### 8.2 Pull the release from GitHub
+
+```bash
+cd /home/oracle/focus-loader-report-upload
+git fetch origin
+git pull --ff-only origin main
+git log -1 --oneline
+git status --short
+```
+
+If the pull reports a conflict, stop and preserve the local files shown by Git.
+Do not run `git reset --hard` until the required configuration has been backed
+up and intentionally restored.
+
+### 8.3 Install build/runtime prerequisites and rebuild
+
+```bash
+sudo dnf install -y gcc python3.11 python3.11-pip acl \
+  policycoreutils-python-utils
+
+cd /home/oracle/focus-loader-report-upload
+go mod download
+go mod verify
+CGO_ENABLED=1 go test ./...
+mkdir -p dist
+CGO_ENABLED=1 go build -buildvcs=false -trimpath \
+  -o dist/focus-loader-report-upload-linux-amd64 .
+chmod 0750 dist/focus-loader-report-upload-linux-amd64
+chmod 0750 sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
+./dist/focus-loader-report-upload-linux-amd64 -version
+```
+
+The deployment script must remain executable. Git tracks this file with mode
+`100755`; `chmod 0750` also repairs a checkout created on a filesystem that did
+not preserve the executable bit.
+
+### 8.4 Verify Oracle Net, SQL*Plus, and OCI inputs
+
+```bash
+export TNS_ADMIN=/home/oracle/adb_wallet
+SQLPLUS_BIN=$(command -v sqlplus)
+test -n "${SQLPLUS_BIN}" && test -x "${SQLPLUS_BIN}"
+
+sudo -u oracle test -r "${TNS_ADMIN}/tnsnames.ora"
+sudo -u focusloader test -r "${TNS_ADMIN}/tnsnames.ora"
+sudo -u focusloader test -r "${TNS_ADMIN}/sqlnet.ora"
+sudo -u focusloader test -r "${TNS_ADMIN}/cwallet.sso"
+
+test -r /home/oracle/.oci/config
+grep -E '^[[:space:]]*(key_file|security_token_file)[[:space:]]*=' \
+  /home/oracle/.oci/config
+```
+
+The OCI files referenced by the oracle config must exist under
+`/home/oracle/.oci`. During installation they are copied to the actual
+focusloader home, made private, and rewritten to absolute focusloader paths.
+If the focusloader wallet checks fail, apply the least-privilege ACL procedure
+in section 2 before continuing.
+
+### 8.5 Stop the old services and update the focusloader binary
+
+```bash
+sudo systemctl stop focus-loader-streamlit.service 2>/dev/null || true
+sudo systemctl stop focus-loader-tns-gui-oracle.service 2>/dev/null || true
+sudo systemctl stop focus-loader-tns-gui.service 2>/dev/null || true
+
+sudo install -o focusloader -g "$(id -gn focusloader)" -m 0750 \
+  dist/focus-loader-report-upload-linux-amd64 \
+  /opt/focus-loader/focus-loader-report-upload
+```
+
+The focusloader backend executes the installed `/opt` binary on port 8080. The
+oracle backend executes
+`/home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64`
+on port 8081.
+
+### 8.6 Register persistent SELinux executable labels
+
+Oracle Linux can label a binary created below `/home/oracle` as `user_tmp_t` or
+`user_home_t`. Systemd then fails before application startup with
+`status=203/EXEC` and an AVC containing `denied { execute }`. Keep SELinux
+enforcing and register narrow, persistent `bin_t` rules for only the two files
+that the oracle backend executes:
+
+```bash
+sudo semanage fcontext -a -t bin_t \
+  '/home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64' \
+  2>/dev/null \
+  || sudo semanage fcontext -m -t bin_t \
+  '/home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64'
+
+sudo semanage fcontext -a -t bin_t \
+  '/home/oracle/focus-loader-report-upload/sql_scripts/deploy_focus_schema_with_sqlloader_audit\.sh' \
+  2>/dev/null \
+  || sudo semanage fcontext -m -t bin_t \
+  '/home/oracle/focus-loader-report-upload/sql_scripts/deploy_focus_schema_with_sqlloader_audit\.sh'
+
+sudo restorecon -Fv \
+  /home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64 \
+  /home/oracle/focus-loader-report-upload/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
+
+ls -lZ \
+  /home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64 \
+  /home/oracle/focus-loader-report-upload/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
+```
+
+Both final contexts must contain `bin_t`. The `semanage` rule survives reboot;
+run `restorecon` after each future build because `go build` replaces the binary.
+
+### 8.7 Reinstall Streamlit and both backend services
+
+Run the installer from the repository root, not from `scripts/`:
+
+```bash
+cd /home/oracle/focus-loader-report-upload
+sudo env \
+  TNS_ADMIN=/home/oracle/adb_wallet \
+  PYTHON_BIN=python3.11 \
+  SQLPLUS_BIN="${SQLPLUS_BIN}" \
+  ./scripts/install-streamlit-ui.sh
+```
+
+The installer recopies the Streamlit modules, recreates/updates the virtual
+environment, securely refreshes `/home/focusloader/.oci`, installs the
+focusloader/oracle systemd units, restarts the three services, and displays up
+to 30 health iterations. On iteration 2 or later, an error only for port 8081
+means port 8080 is already healthy and the oracle backend is still starting.
+
+### 8.8 Validate the redeployment
+
+```bash
+sudo systemctl status focus-loader-tns-gui.service --no-pager --full
+sudo systemctl status focus-loader-tns-gui-oracle.service --no-pager --full
+sudo systemctl status focus-loader-streamlit.service --no-pager --full
+
+curl -fsS http://127.0.0.1:8080/api/v1/health
+curl -fsS http://127.0.0.1:8081/api/v1/health
+curl -fsS http://127.0.0.1:8501/_stcore/health
+
+cd /home/oracle/focus-loader-report-upload
+./scripts/test-streamlit-ui.sh
+```
+
+The Streamlit health endpoint returns `ok`. Reconnect the laptop's OCI Bastion
+tunnel, open `http://127.0.0.1:8501`, and confirm the sidebar can select both
+`focusloader` and `oracle`.
+
+### 8.9 Diagnose `203/EXEC` or a backend that does not start
+
+```bash
+sudo systemctl status focus-loader-tns-gui-oracle.service \
+  --no-pager --full
+sudo journalctl -u focus-loader-tns-gui-oracle.service \
+  -b -n 150 --no-pager --full
+sudo ausearch -m AVC,USER_AVC -ts recent | tail -n 50
+file /home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64
+namei -l /home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64
+findmnt -T /home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64 \
+  -o TARGET,FSTYPE,OPTIONS
+```
+
+`203/EXEC` is an operating-system execution failure, not a database, wallet, or
+OCI authentication failure. Confirm that the file is an ELF 64-bit Linux
+executable, every path component is traversable by `oracle`, the filesystem is
+not mounted `noexec`, and the file has the registered `bin_t` context. After
+correcting it:
+
+```bash
+sudo restorecon -Fv \
+  /home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64
+sudo systemctl reset-failed focus-loader-tns-gui-oracle.service
+sudo systemctl restart focus-loader-tns-gui-oracle.service
+curl -fsS http://127.0.0.1:8081/api/v1/health
+sudo systemctl restart focus-loader-streamlit.service
+```
+
+## 9. Logs and troubleshooting
+
+Follow all three services:
 
 ```bash
 sudo journalctl -u focus-loader-tns-gui.service -f
+sudo journalctl -u focus-loader-tns-gui-oracle.service -f
 sudo journalctl -u focus-loader-streamlit.service -f
 ```
 
@@ -712,8 +920,10 @@ sudo journalctl -u focus-loader-streamlit.service -f
 
 ```bash
 sudo systemctl is-active focus-loader-tns-gui.service
+sudo systemctl is-active focus-loader-tns-gui-oracle.service
 curl -v http://127.0.0.1:8080/api/v1/health
-sudo grep '^FOCUS_API_URL=' /etc/focus-loader/streamlit.env
+curl -v http://127.0.0.1:8081/api/v1/health
+sudo grep '^FOCUS_API_URL' /etc/focus-loader/streamlit.env
 ```
 
 An older binary does not have `/api/v1/schema/deploy`; install the
@@ -776,7 +986,7 @@ running. A nonzero script exit code is displayed with its redacted output.
 ### Port already in use
 
 ```bash
-sudo ss -ltnp | grep -E ':(8080|8501)[[:space:]]'
+sudo ss -ltnp | grep -E ':(8080|8081|8501)[[:space:]]'
 ```
 
 Stop the conflicting process or deliberately update both the service and
@@ -794,7 +1004,7 @@ sudo dnf info python3.11 python3.11-pip
 
 Oracle Linux 8.8 or newer is required for the documented Python 3.11 RPM path.
 
-## 9. Upgrade and rollback
+## 10. Upgrade and rollback
 
 Back up configuration and capture installed versions:
 
@@ -804,8 +1014,8 @@ sudo cp -a /etc/focus-loader /etc/focus-loader.backup.$(date +%Y%m%d%H%M%S)
 /opt/focus-loader/streamlit-ui/.venv/bin/streamlit version
 ```
 
-For an upgrade, install the new Go binary, recopy the Streamlit files, update
-the virtual environment from `requirements.txt`, then restart both services.
+For an upgrade, use the complete redeployment procedure in section 8. It covers
+both Go backends, Streamlit, the OCI copy, SELinux relabeling, and validation.
 
 To disable only the new interface while retaining the loader:
 

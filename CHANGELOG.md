@@ -1,5 +1,17 @@
 # Changelog
 
+## 26.9.3-streamlit-redeployment-runbook
+
+- Added a complete Oracle Linux redeployment runbook covering configuration
+  backup, safe Git pull, CGO tests/build, executable permissions, wallet/OCI
+  preflight, service replacement, installer execution, and dual-backend health
+  validation.
+- Documented the SELinux cause and durable remediation for systemd
+  `status=203/EXEC`, including narrow persistent `bin_t` rules, `restorecon`
+  after rebuilt files, AVC diagnostics, mount/path checks, and service recovery.
+- Corrected the fixed schema-deployment script's Git executable bit so a fresh
+  checkout satisfies installer and oracle-backend execution checks.
+
 ## 26.9.2-dual-user-streamlit
 
 - Added a Streamlit execution-identity dropdown for `focusloader` and `oracle`,
