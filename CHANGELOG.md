@@ -1,5 +1,16 @@
 # Changelog
 
+## 26.9.1-api-key-parameter-file
+
+- Added `-ParameterFile` to the Windows API-key Streamlit connector so a
+  validated `output_assets.txt` can supply all connection, OCI profile, key,
+  port, timeout, and flag values in one argument.
+- Keep direct-parameter compatibility and let explicit command-line values
+  override file values; reject unknown/duplicate keys, invalid values, and
+  unsupported asset versions.
+- Added CI dry-run coverage, complete file content and one-line commands,
+  path-resolution rules, and security guidance.
+
 ## 26.9.0-loader-execution-ui
 
 - Added an **Execute loader** Streamlit tab that starts the last validated

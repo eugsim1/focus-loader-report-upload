@@ -115,6 +115,63 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\root\Documents
 This command contains deployment-specific OCIDs and local paths. Keep the PEM
 private key itself only on the laptop and never add it to the repository.
 
+## One-line invocation with a parameter file
+
+The connector also accepts the generated `Name=Value` inventory format through
+`-ParameterFile`. This calls `connect-streamlit-api-key-auth.ps1` directly; no
+additional wrapper is required:
+
+```cmd
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-api-key-auth-streamlit\connect-streamlit-api-key-auth.ps1" -ParameterFile "C:\path\to\output_assets.txt"
+```
+
+Example `output_assets.txt`:
+
+```text
+# Local infrastructure metadata. Do not commit this file.
+AssetsVersion=1
+BastionId=ocid1.bastion.oc1.eu-frankfurt-1.REPLACE
+InstanceId=ocid1.instance.oc1.eu-frankfurt-1.REPLACE
+PrivateIp=10.30.1.10
+Region=eu-frankfurt-1
+SshPrivateKeyPath=C:\Users\CURRENT_USER\.ssh\bastion_ed25519
+SshPublicKeyPath=C:\Users\CURRENT_USER\.ssh\bastion_ed25519.pub
+OciUserId=ocid1.user.oc1..REPLACE
+OciTenancyId=ocid1.tenancy.oc1..REPLACE
+ApiKeyFingerprint=aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99
+ApiPrivateKeyPath=C:\Users\CURRENT_USER\.oci\oci_api_key.pem
+ProfileName=STREAMLIT_API_KEY
+OciConfigFilePath=C:\Users\CURRENT_USER\.oci\config
+ConnectorScriptPath=C:\path\to\connect-streamlit-api-key-auth.ps1
+BastionSessionTtl=3600
+LocalPort=8501
+RemotePort=8501
+WaitSeconds=1200
+PollSeconds=10
+TargetUser=oracle
+OciExecutable=oci
+SshExecutable=ssh
+KeepSession=false
+```
+
+`ConnectorScriptPath` is accepted for compatibility with the generated asset
+inventory but ignored because this connector is already running. Blank lines
+and lines beginning with `#` or `;` are allowed. Unknown keys, duplicate keys,
+invalid values, and unsupported `AssetsVersion` values are rejected. Relative
+key/config paths are resolved from the parameter file's directory.
+
+Explicit command-line parameters override values from the file. For example,
+this validates the inventory without contacting OCI and uses a different local
+port without editing the file:
+
+```cmd
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\connect-streamlit-api-key-auth.ps1" -ParameterFile "C:\path\to\output_assets.txt" -LocalPort 18501 -DryRun
+```
+
+The parameter file contains infrastructure identifiers and local paths. It
+must not contain passwords or private-key contents, and `output_assets.txt` is
+excluded by the repository `.gitignore`.
+
 ## Dry run
 
 The dry run validates parameter formats and both local key paths. It prints the
@@ -139,6 +196,7 @@ creating a session, or starting SSH:
 
 | Parameter | Default | Purpose |
 |---|---:|---|
+| `-ParameterFile` | none | Read `Name=Value` parameters from an `output_assets.txt` inventory. |
 | `-OciUserId` | required | IAM user OCID registered with the public API key. |
 | `-OciTenancyId` | required | OCI tenancy OCID. |
 | `-ApiKeyFingerprint` | required | 16-byte colon-separated fingerprint shown in OCI. |
@@ -218,6 +276,7 @@ TCP 22.
 ## Security notes
 
 - Never commit the API private key, SSH private key, `.oci/config`, or backups.
+- Never commit `output_assets.txt`; it contains infrastructure identifiers and local paths.
 - Restrict both private keys to the Windows user running the launcher.
 - Rotate and remove unused API keys in OCI IAM.
 - The wrapper stores key paths, not private-key contents, in the profile.

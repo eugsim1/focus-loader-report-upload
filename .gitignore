@@ -22,6 +22,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+**/output_assets.txt
 
 # Build outputs
 dist/*

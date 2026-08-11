@@ -4,46 +4,43 @@ Configures an OCI API-key profile and opens the Streamlit Bastion tunnel.
 
 .DESCRIPTION
 Creates or validates a named profile in the local Windows OCI configuration
-file using parameter-supplied user, tenancy, fingerprint, region, and API
-signing-key path. It then delegates Bastion session creation and SSH forwarding
-to the shared connect-streamlit-bastion.ps1 launcher.
+file using explicit parameters or a validated Name=Value parameter file. It
+then delegates Bastion session creation and SSH forwarding to the shared
+connect-streamlit-bastion.ps1 launcher. Explicit parameters override file
+values.
+
+.EXAMPLE
+.\connect-streamlit-api-key-auth.ps1 -ParameterFile .\output_assets.txt
 #>
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
+    [string]$ParameterFile,
+
     [ValidatePattern('^ocid1\.bastion\.')]
     [string]$BastionId,
 
-    [Parameter(Mandatory = $true)]
     [ValidatePattern('^ocid1\.instance\.')]
     [string]$InstanceId,
 
-    [Parameter(Mandatory = $true)]
     [string]$PrivateIp,
 
-    [Parameter(Mandatory = $true)]
     [ValidatePattern('^[a-z]{2}-[a-z0-9-]+-[0-9]+$')]
     [string]$Region,
 
-    [Parameter(Mandatory = $true)]
     [string]$SshPrivateKeyPath,
 
     [string]$SshPublicKeyPath,
 
-    [Parameter(Mandatory = $true)]
     [ValidatePattern('^ocid1\.user\.')]
     [string]$OciUserId,
 
-    [Parameter(Mandatory = $true)]
     [ValidatePattern('^ocid1\.tenancy\.')]
     [string]$OciTenancyId,
 
-    [Parameter(Mandatory = $true)]
     [ValidatePattern('^([0-9A-Fa-f]{2}:){15}[0-9A-Fa-f]{2}$')]
     [string]$ApiKeyFingerprint,
 
-    [Parameter(Mandatory = $true)]
     [string]$ApiPrivateKeyPath,
 
     [ValidatePattern('^[A-Za-z0-9_-]+$')]
@@ -83,8 +80,198 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$explicitParameters = @{}
+foreach ($parameterName in $PSBoundParameters.Keys) {
+    $explicitParameters[$parameterName] = $true
+}
+
+function Expand-ParameterFilePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Value,
+        [Parameter(Mandatory = $true)][string]$BaseDirectory
+    )
+
+    $expanded = [Environment]::ExpandEnvironmentVariables($Value.Trim().Trim('"', "'"))
+    $userHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+    if ($expanded -match '^\$\{HOME\}(.*)$') {
+        $expanded = $userHome + $Matches[1]
+    }
+    elseif ($expanded -match '^\$HOME(.*)$') {
+        $expanded = $userHome + $Matches[1]
+    }
+    elseif ($expanded -eq '~') {
+        $expanded = $userHome
+    }
+    elseif ($expanded.StartsWith('~\') -or $expanded.StartsWith('~/')) {
+        $expanded = Join-Path $userHome $expanded.Substring(2)
+    }
+    if (-not [System.IO.Path]::IsPathRooted($expanded)) {
+        $expanded = Join-Path $BaseDirectory $expanded
+    }
+    return $expanded
+}
+
+function Get-EffectiveString {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [AllowNull()][AllowEmptyString()][string]$CurrentValue,
+        [Parameter(Mandatory = $true)][hashtable]$FileValues,
+        [Parameter(Mandatory = $true)][hashtable]$ExplicitValues,
+        [string]$FileDirectory,
+        [switch]$IsPath
+    )
+
+    if (-not $ExplicitValues.ContainsKey($Name) -and $FileValues.ContainsKey($Name)) {
+        $value = [string]$FileValues[$Name]
+        if ($IsPath -and $value) {
+            return Expand-ParameterFilePath -Value $value -BaseDirectory $FileDirectory
+        }
+        return $value
+    }
+    return $CurrentValue
+}
+
+function Get-EffectiveInteger {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][int]$CurrentValue,
+        [Parameter(Mandatory = $true)][hashtable]$FileValues,
+        [Parameter(Mandatory = $true)][hashtable]$ExplicitValues,
+        [Parameter(Mandatory = $true)][int]$Minimum,
+        [Parameter(Mandatory = $true)][int]$Maximum
+    )
+
+    $value = $CurrentValue
+    if (-not $ExplicitValues.ContainsKey($Name) -and $FileValues.ContainsKey($Name)) {
+        if (-not [int]::TryParse($FileValues[$Name], [ref]$value)) {
+            throw "Parameter file value '$Name' must be an integer."
+        }
+    }
+    if ($value -lt $Minimum -or $value -gt $Maximum) {
+        throw "Parameter '$Name' must be from $Minimum through $Maximum."
+    }
+    return $value
+}
+
+function Get-EffectiveBoolean {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][bool]$CurrentValue,
+        [Parameter(Mandatory = $true)][hashtable]$FileValues,
+        [Parameter(Mandatory = $true)][hashtable]$ExplicitValues
+    )
+
+    $value = $CurrentValue
+    if (-not $ExplicitValues.ContainsKey($Name) -and $FileValues.ContainsKey($Name)) {
+        if (-not [bool]::TryParse($FileValues[$Name], [ref]$value)) {
+            throw "Parameter file value '$Name' must be true or false."
+        }
+    }
+    return $value
+}
+
+$parameterFileValues = @{}
+$parameterFileDirectory = (Get-Location).Path
+if ($ParameterFile) {
+    $resolvedParameterFile = (Resolve-Path -LiteralPath $ParameterFile -ErrorAction Stop).Path
+    if (-not (Test-Path -LiteralPath $resolvedParameterFile -PathType Leaf)) {
+        throw "ParameterFile is not a file: $resolvedParameterFile"
+    }
+    $parameterFileDirectory = Split-Path -Parent $resolvedParameterFile
+    $allowedKeys = @(
+        'AssetsVersion', 'BastionId', 'InstanceId', 'PrivateIp', 'Region',
+        'SshPrivateKeyPath', 'SshPublicKeyPath', 'OciUserId', 'OciTenancyId',
+        'ApiKeyFingerprint', 'ApiPrivateKeyPath', 'ProfileName',
+        'OciConfigFilePath', 'ConnectorScriptPath', 'BastionSessionTtl',
+        'LocalPort', 'RemotePort', 'WaitSeconds', 'PollSeconds', 'TargetUser',
+        'OciExecutable', 'SshExecutable', 'ReplaceExistingProfile',
+        'KeepSession', 'DryRun'
+    )
+    $lineNumber = 0
+    foreach ($line in [System.IO.File]::ReadAllLines($resolvedParameterFile)) {
+        $lineNumber++
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith('#') -or $trimmed.StartsWith(';')) { continue }
+        $separator = $trimmed.IndexOf('=')
+        if ($separator -le 0) {
+            throw "Parameter file line $lineNumber must use Name=Value format."
+        }
+        $key = $trimmed.Substring(0, $separator).Trim()
+        $value = $trimmed.Substring($separator + 1).Trim().Trim('"', "'")
+        if ($allowedKeys -notcontains $key) {
+            throw "Parameter file contains unsupported key '$key' on line $lineNumber."
+        }
+        if ($parameterFileValues.ContainsKey($key)) {
+            throw "Parameter file contains duplicate key '$key'."
+        }
+        $parameterFileValues[$key] = $value
+    }
+    if ($parameterFileValues.ContainsKey('AssetsVersion') -and
+        $parameterFileValues.AssetsVersion -ne '1') {
+        throw "Unsupported parameter-file AssetsVersion '$($parameterFileValues.AssetsVersion)'."
+    }
+    Write-Host "Loaded API-key parameters from: $resolvedParameterFile"
+}
+
+$BastionId = Get-EffectiveString -Name 'BastionId' -CurrentValue $BastionId -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$InstanceId = Get-EffectiveString -Name 'InstanceId' -CurrentValue $InstanceId -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$PrivateIp = Get-EffectiveString -Name 'PrivateIp' -CurrentValue $PrivateIp -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$Region = Get-EffectiveString -Name 'Region' -CurrentValue $Region -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$SshPrivateKeyPath = Get-EffectiveString -Name 'SshPrivateKeyPath' -CurrentValue $SshPrivateKeyPath -FileValues $parameterFileValues -ExplicitValues $explicitParameters -FileDirectory $parameterFileDirectory -IsPath
+$SshPublicKeyPath = Get-EffectiveString -Name 'SshPublicKeyPath' -CurrentValue $SshPublicKeyPath -FileValues $parameterFileValues -ExplicitValues $explicitParameters -FileDirectory $parameterFileDirectory -IsPath
+$OciUserId = Get-EffectiveString -Name 'OciUserId' -CurrentValue $OciUserId -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$OciTenancyId = Get-EffectiveString -Name 'OciTenancyId' -CurrentValue $OciTenancyId -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$ApiKeyFingerprint = Get-EffectiveString -Name 'ApiKeyFingerprint' -CurrentValue $ApiKeyFingerprint -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$ApiPrivateKeyPath = Get-EffectiveString -Name 'ApiPrivateKeyPath' -CurrentValue $ApiPrivateKeyPath -FileValues $parameterFileValues -ExplicitValues $explicitParameters -FileDirectory $parameterFileDirectory -IsPath
+$ProfileName = Get-EffectiveString -Name 'ProfileName' -CurrentValue $ProfileName -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$OciConfigFilePath = Get-EffectiveString -Name 'OciConfigFilePath' -CurrentValue $OciConfigFilePath -FileValues $parameterFileValues -ExplicitValues $explicitParameters -FileDirectory $parameterFileDirectory -IsPath
+$TargetUser = Get-EffectiveString -Name 'TargetUser' -CurrentValue $TargetUser -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$OciExecutable = Get-EffectiveString -Name 'OciExecutable' -CurrentValue $OciExecutable -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$SshExecutable = Get-EffectiveString -Name 'SshExecutable' -CurrentValue $SshExecutable -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$BastionSessionTtl = Get-EffectiveInteger -Name 'BastionSessionTtl' -CurrentValue $BastionSessionTtl -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 30 -Maximum 10800
+$LocalPort = Get-EffectiveInteger -Name 'LocalPort' -CurrentValue $LocalPort -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 1 -Maximum 65535
+$RemotePort = Get-EffectiveInteger -Name 'RemotePort' -CurrentValue $RemotePort -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 1 -Maximum 65535
+$WaitSeconds = Get-EffectiveInteger -Name 'WaitSeconds' -CurrentValue $WaitSeconds -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 60 -Maximum 3600
+$PollSeconds = Get-EffectiveInteger -Name 'PollSeconds' -CurrentValue $PollSeconds -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 1 -Maximum 60
+$ReplaceExistingProfile = Get-EffectiveBoolean -Name 'ReplaceExistingProfile' -CurrentValue ([bool]$ReplaceExistingProfile) -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$KeepSession = Get-EffectiveBoolean -Name 'KeepSession' -CurrentValue ([bool]$KeepSession) -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+$DryRun = Get-EffectiveBoolean -Name 'DryRun' -CurrentValue ([bool]$DryRun) -FileValues $parameterFileValues -ExplicitValues $explicitParameters
+
+$requiredValues = @{
+    BastionId = $BastionId
+    InstanceId = $InstanceId
+    PrivateIp = $PrivateIp
+    Region = $Region
+    SshPrivateKeyPath = $SshPrivateKeyPath
+    OciUserId = $OciUserId
+    OciTenancyId = $OciTenancyId
+    ApiKeyFingerprint = $ApiKeyFingerprint
+    ApiPrivateKeyPath = $ApiPrivateKeyPath
+}
+foreach ($requiredName in $requiredValues.Keys) {
+    if ([string]::IsNullOrWhiteSpace([string]$requiredValues[$requiredName])) {
+        throw "Missing required parameter '$requiredName'. Supply it directly or through -ParameterFile."
+    }
+}
+if ($BastionId -notmatch '^ocid1\.bastion\.') { throw 'BastionId must be a Bastion OCID.' }
+if ($InstanceId -notmatch '^ocid1\.instance\.') { throw 'InstanceId must be a Compute instance OCID.' }
+$parsedPrivateIp = $null
+if (-not [System.Net.IPAddress]::TryParse($PrivateIp, [ref]$parsedPrivateIp) -or
+    $parsedPrivateIp.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+    throw "PrivateIp must be a valid IPv4 address: $PrivateIp"
+}
+if ($Region -notmatch '^[a-z]{2}-[a-z0-9-]+-[0-9]+$') { throw "Invalid OCI region: $Region" }
+if ($OciUserId -notmatch '^ocid1\.user\.') { throw 'OciUserId must be an OCI user OCID.' }
+if ($OciTenancyId -notmatch '^ocid1\.tenancy\.') { throw 'OciTenancyId must be an OCI tenancy OCID.' }
+if ($ApiKeyFingerprint -notmatch '^([0-9A-Fa-f]{2}:){15}[0-9A-Fa-f]{2}$') {
+    throw 'ApiKeyFingerprint must contain 16 colon-separated hexadecimal bytes.'
+}
+if ($ProfileName -notmatch '^[A-Za-z0-9_-]+$') { throw "Invalid ProfileName: $ProfileName" }
+if ($TargetUser -notmatch '^[a-z_][a-z0-9_-]*$') { throw "Invalid TargetUser: $TargetUser" }
+
 if (-not $OciConfigFilePath) {
-    $OciConfigFilePath = Join-Path $env:USERPROFILE '.oci\config'
+    $userHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+    $OciConfigFilePath = Join-Path $userHome '.oci\config'
 }
 $resolvedApiPrivateKey = (Resolve-Path -LiteralPath $ApiPrivateKeyPath -ErrorAction Stop).Path
 if (-not (Test-Path -LiteralPath $resolvedApiPrivateKey -PathType Leaf)) {

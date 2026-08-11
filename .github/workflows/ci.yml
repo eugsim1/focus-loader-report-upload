@@ -109,6 +109,38 @@ jobs:
             -LocalPort 18503 `
             -DryRun
 
+          $parameterFile = Join-Path $env:RUNNER_TEMP 'output_assets.txt'
+          @(
+            'AssetsVersion=1',
+            'BastionId=ocid1.bastion.oc1.eu-frankfurt-1.testbastion',
+            'InstanceId=ocid1.instance.oc1.eu-frankfurt-1.testinstance',
+            'PrivateIp=10.30.1.10',
+            'Region=eu-frankfurt-1',
+            "SshPrivateKeyPath=$privateKey",
+            "SshPublicKeyPath=$publicKey",
+            'OciUserId=ocid1.user.oc1..testuser',
+            'OciTenancyId=ocid1.tenancy.oc1..testtenancy',
+            'ApiKeyFingerprint=aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99',
+            "ApiPrivateKeyPath=$apiPrivateKey",
+            'ProfileName=STREAMLIT_API_KEY',
+            "OciConfigFilePath=$(Join-Path $env:RUNNER_TEMP 'parameter-file-oci-config')",
+            'ConnectorScriptPath=ignored-by-this-connector.ps1',
+            'BastionSessionTtl=3600',
+            'LocalPort=18507',
+            'RemotePort=8501',
+            'WaitSeconds=1200',
+            'PollSeconds=10',
+            'TargetUser=oracle',
+            'OciExecutable=oci',
+            'SshExecutable=ssh',
+            'KeepSession=false'
+          ) | Set-Content -LiteralPath $parameterFile
+          $parameterDryRun = & $apiKeyScript -ParameterFile $parameterFile -DryRun *>&1 | Out-String
+          if (-not $parameterDryRun.Contains('Loaded API-key parameters from:') -or
+              -not $parameterDryRun.Contains('127.0.0.1:18507')) {
+            throw "Parameter-file dry run did not load or forward its values:`n$parameterDryRun"
+          }
+
           $ociMock = Join-Path $env:RUNNER_TEMP 'oci-mock'
           $mockSource = @'
           #!/usr/bin/env bash

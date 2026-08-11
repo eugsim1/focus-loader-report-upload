@@ -174,7 +174,8 @@ Two complete Windows authentication wrappers are also available:
   browser sign-in.
 - [`windows-api-key-auth-streamlit/README.md`](windows-api-key-auth-streamlit/README.md)
   safely creates or validates a named local OCI API-key profile from explicit
-  parameters, preserving other profiles and backing up changed configuration.
+  parameters or a validated `output_assets.txt` supplied with `-ParameterFile`,
+  preserving other profiles and backing up changed configuration.
 
 ## Contents
 
