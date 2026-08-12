@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.11.0-schema-stats-reset`
+Version `26.12.0-loader-diagnostics`
 
 > **Independent project disclaimer**
 >
@@ -144,7 +144,7 @@ rewrites copied key/token paths, and provisions separate loopback services. All
 services are reached through SSH/OCI Bastion or an authenticated TLS reverse
 proxy.
 
-Quick deployment after installing the `26.11.0-schema-stats-reset` Go binary:
+Quick deployment after installing the `26.12.0-loader-diagnostics` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip

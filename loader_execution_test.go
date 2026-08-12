@@ -168,6 +168,14 @@ func TestLoaderExecutionServiceReportsRowCountIncreaseAndRedactsOutput(t *testin
 	if started.MonthlyCosts == nil || started.Services == nil {
 		t.Fatalf("starting response must use empty analytics arrays: %#v", started)
 	}
+	if started.Executable != executable || started.WorkingDirectory != workDirectory ||
+		!strings.Contains(started.CommandLine, "'-dp-stdin'") ||
+		!strings.Contains(started.ManualCommand, "Database password:") ||
+		!strings.Contains(started.ManualCommand, "TNS_ADMIN="+tnsAdmin) ||
+		strings.Contains(started.CommandLine, "runtime-test-secret") ||
+		strings.Contains(started.ManualCommand, "runtime-test-secret") {
+		t.Fatalf("unsafe or incomplete execution diagnostics: %#v", started)
+	}
 	deadline := time.Now().Add(2 * time.Second)
 	var finished loaderExecutionResponse
 	for time.Now().Before(deadline) {
@@ -203,6 +211,31 @@ func TestLoaderExecutionServiceReportsRowCountIncreaseAndRedactsOutput(t *testin
 	defer countMu.Unlock()
 	if counterUser != "FOCUS_APP" || counterPassword != "runtime-test-secret" || counterAlias != "FOCUS_HIGH" {
 		t.Fatalf("unexpected row counter credentials: %s/%s@%s", counterUser, counterPassword, counterAlias)
+	}
+}
+
+func TestLoaderFailureMessageIncludesProcessDiagnosticsWithoutDuplicatingOutput(t *testing.T) {
+	message := buildLoaderFailureMessage(
+		errors.New("exit status 1"),
+		1,
+		"/opt/focus-loader/focus-loader-report-upload",
+		"/opt/focus-loader",
+		"ERROR: sqlldr was not found",
+		false,
+	)
+	for _, expected := range []string{
+		"exit status 1",
+		"exit code 1",
+		"Executable: /opt/focus-loader/focus-loader-report-upload",
+		"Working directory: /opt/focus-loader",
+		"combined stdout/stderr",
+	} {
+		if !strings.Contains(message, expected) {
+			t.Fatalf("failure message is missing %q: %s", expected, message)
+		}
+	}
+	if strings.Contains(message, "sqlldr was not found") {
+		t.Fatalf("failure summary duplicated the full captured output: %s", message)
 	}
 }
 

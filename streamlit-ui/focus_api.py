@@ -106,7 +106,15 @@ class LoaderJob:
     services: tuple[str, ...]
     analytics_updated_at_utc: str
     analytics_error: str
+    executable: str
+    working_directory: str
+    command_line: str
+    manual_command: str
+    tns_admin: str
+    home_directory: str
+    path_environment: str
     output: str
+    output_truncated: bool
     error: str
 
     @property
@@ -359,7 +367,15 @@ class FocusAPIClient:
                 payload, "analyticsUpdatedAtUtc"
             ),
             analytics_error=self._optional_string(payload, "analyticsError"),
+            executable=self._optional_string(payload, "executable"),
+            working_directory=self._optional_string(payload, "workingDirectory"),
+            command_line=self._optional_string(payload, "commandLine"),
+            manual_command=self._optional_string(payload, "manualCommand"),
+            tns_admin=self._optional_string(payload, "tnsAdmin"),
+            home_directory=self._optional_string(payload, "homeDirectory"),
+            path_environment=self._optional_string(payload, "pathEnvironment"),
             output=self._string(payload, "output"),
+            output_truncated=self._optional_bool(payload, "outputTruncated"),
             error=self._string(payload, "error"),
         )
 
@@ -481,6 +497,13 @@ class FocusAPIClient:
         if value is None:
             return ""
         if not isinstance(value, str):
+            raise FocusAPIError(f"The Go API returned an invalid {name}.")
+        return value
+
+    @staticmethod
+    def _optional_bool(payload: Mapping[str, Any], name: str) -> bool:
+        value = payload.get(name, False)
+        if not isinstance(value, bool):
             raise FocusAPIError(f"The Go API returned an invalid {name}.")
         return value
 

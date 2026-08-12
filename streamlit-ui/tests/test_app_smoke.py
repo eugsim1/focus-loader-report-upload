@@ -25,7 +25,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
         class BackendHandler(BaseHTTPRequestHandler):
             def do_GET(self):
                 if self.path == "/api/v1/health":
-                    payload = {"status": "ok", "version": "26.11.0-schema-stats-reset"}
+                    payload = {"status": "ok", "version": "26.12.0-loader-diagnostics"}
                 elif self.path == "/api/v1/tns/aliases":
                     payload = {
                         "aliases": ["FOCUS_HIGH", "FOCUS_LOW"],

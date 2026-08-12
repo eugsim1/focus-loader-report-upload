@@ -26,7 +26,7 @@ const (
 	loaderAnalyticsInterval    = 30 * time.Second
 	loaderAnalyticsTimeout     = 25 * time.Second
 	maxLoaderJobRequestBytes   = 64 * 1024
-	maxLoaderJobOutputBytes    = 512 * 1024
+	maxLoaderJobOutputBytes    = 2 * 1024 * 1024
 	maxLoaderJobFieldBytes     = 4096
 	loaderTargetTableName      = "TEMP_OCI_FOCUS"
 	loaderOCIConfigProfile     = "config_profile"
@@ -91,7 +91,15 @@ type loaderExecutionResponse struct {
 	Services              []string            `json:"services"`
 	AnalyticsUpdatedAtUTC string              `json:"analyticsUpdatedAtUtc"`
 	AnalyticsError        string              `json:"analyticsError"`
+	Executable            string              `json:"executable"`
+	WorkingDirectory      string              `json:"workingDirectory"`
+	CommandLine           string              `json:"commandLine"`
+	ManualCommand         string              `json:"manualCommand"`
+	TNSAdmin              string              `json:"tnsAdmin"`
+	HomeDirectory         string              `json:"homeDirectory"`
+	PathEnvironment       string              `json:"pathEnvironment"`
 	Output                string              `json:"output"`
+	OutputTruncated       bool                `json:"outputTruncated"`
 	Error                 string              `json:"error"`
 }
 
@@ -135,8 +143,16 @@ type loaderExecutionJob struct {
 	services              []string
 	analyticsUpdatedAtUTC time.Time
 	analyticsError        string
+	executable            string
+	workingDirectory      string
+	commandLine           string
+	manualCommand         string
+	tnsAdmin              string
+	homeDirectory         string
+	pathEnvironment       string
 	output                *boundedDeploymentOutput
 	finalOutput           string
+	outputTruncated       bool
 	errorMessage          string
 }
 
@@ -288,12 +304,27 @@ func (service *loaderExecutionService) start(request loaderExecutionRequest) (lo
 		return loaderExecutionResponse{}, loaderExecutionAPIError{status: http.StatusInternalServerError, message: "could not create loader job id"}
 	}
 	job := &loaderExecutionJob{
-		id:            jobID,
-		status:        "starting",
-		databaseUser:  request.DatabaseUser,
-		databaseAlias: request.DatabaseAlias,
-		monthlyCosts:  []loaderMonthlyCost{},
-		services:      []string{},
+		id:               jobID,
+		status:           "starting",
+		databaseUser:     request.DatabaseUser,
+		databaseAlias:    request.DatabaseAlias,
+		executable:       executable,
+		workingDirectory: workingDirectory,
+		commandLine:      buildLoaderCommandLine(executable, arguments),
+		manualCommand: buildManualLoaderCommand(
+			executable,
+			workingDirectory,
+			arguments,
+			request.DatabaseAuthMode == loaderDatabasePassword,
+			service.getenv("TNS_ADMIN"),
+			service.getenv("HOME"),
+			service.getenv("PATH"),
+		),
+		tnsAdmin:        service.getenv("TNS_ADMIN"),
+		homeDirectory:   service.getenv("HOME"),
+		pathEnvironment: service.getenv("PATH"),
+		monthlyCosts:    []loaderMonthlyCost{},
+		services:        []string{},
 		output: &boundedDeploymentOutput{
 			limit: maxLoaderJobOutputBytes,
 		},
@@ -373,6 +404,7 @@ func (service *loaderExecutionService) run(jobID string, input loaderExecutionIn
 
 	finishedAt := time.Now().UTC()
 	finalOutput := redactDatabasePasswords(job.output.String(), input.MonitorPassword, input.VaultSecretOCID)
+	outputTruncated := job.output.Truncated()
 	status := "succeeded"
 	errorMessage := ""
 	if runErr != nil || exitCode != 0 {
@@ -380,11 +412,14 @@ func (service *loaderExecutionService) run(jobID string, input loaderExecutionIn
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			status = "timed_out"
 		}
-		if runErr != nil {
-			errorMessage = redactDatabasePasswords("loader execution failed: "+runErr.Error(), input.MonitorPassword, input.VaultSecretOCID)
-		} else {
-			errorMessage = fmt.Sprintf("loader execution failed with exit code %d", exitCode)
-		}
+		errorMessage = buildLoaderFailureMessage(
+			runErr,
+			exitCode,
+			input.Executable,
+			input.WorkingDirectory,
+			finalOutput,
+			outputTruncated,
+		)
 	}
 
 	service.mu.Lock()
@@ -393,6 +428,7 @@ func (service *loaderExecutionService) run(jobID string, input loaderExecutionIn
 		job.finishedAtUTC = finishedAt
 		job.exitCode = &exitCode
 		job.finalOutput = finalOutput
+		job.outputTruncated = outputTruncated
 		job.output = nil
 		job.errorMessage = errorMessage
 	}
@@ -540,7 +576,15 @@ func (service *loaderExecutionService) snapshotLocked(jobID string) (loaderExecu
 		Services:              services,
 		AnalyticsUpdatedAtUTC: formatOptionalLoaderTime(job.analyticsUpdatedAtUTC),
 		AnalyticsError:        job.analyticsError,
+		Executable:            job.executable,
+		WorkingDirectory:      job.workingDirectory,
+		CommandLine:           job.commandLine,
+		ManualCommand:         job.manualCommand,
+		TNSAdmin:              job.tnsAdmin,
+		HomeDirectory:         job.homeDirectory,
+		PathEnvironment:       job.pathEnvironment,
 		Output:                job.finalOutput,
+		OutputTruncated:       job.outputTruncated,
 		Error:                 job.errorMessage,
 	}, true
 }
@@ -717,6 +761,78 @@ func appendLoaderValueArgument(arguments *[]string, flag, value string) {
 	if value != "" {
 		*arguments = append(*arguments, flag, value)
 	}
+}
+
+func shellQuoteLoaderArgument(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func buildLoaderCommandLine(executable string, arguments []string) string {
+	parts := make([]string, 0, len(arguments)+1)
+	parts = append(parts, shellQuoteLoaderArgument(executable))
+	for _, argument := range arguments {
+		parts = append(parts, shellQuoteLoaderArgument(argument))
+	}
+	return strings.Join(parts, " ")
+}
+
+func buildManualLoaderCommand(
+	executable string,
+	workingDirectory string,
+	arguments []string,
+	promptForPassword bool,
+	tnsAdmin string,
+	homeDirectory string,
+	pathEnvironment string,
+) string {
+	commandLine := buildLoaderCommandLine(executable, arguments)
+	environment := []string{"env"}
+	for _, item := range []struct {
+		name  string
+		value string
+	}{
+		{"TNS_ADMIN", tnsAdmin},
+		{"HOME", homeDirectory},
+		{"PATH", pathEnvironment},
+	} {
+		if item.value != "" {
+			environment = append(environment, shellQuoteLoaderArgument(item.name+"="+item.value))
+		}
+	}
+	if len(environment) > 1 {
+		commandLine = strings.Join(environment, " ") + " " + commandLine
+	}
+	changeDirectory := "cd -- " + shellQuoteLoaderArgument(workingDirectory) + " && "
+	if !promptForPassword {
+		return changeDirectory + commandLine
+	}
+	return changeDirectory +
+		"{ IFS= read -r -s -p 'Database password: ' FOCUS_DB_PASSWORD; " +
+		"printf '\\n'; printf '%s' \"$FOCUS_DB_PASSWORD\" | " + commandLine +
+		"; FOCUS_LOADER_STATUS=${PIPESTATUS[1]}; unset FOCUS_DB_PASSWORD; " +
+		"exit \"$FOCUS_LOADER_STATUS\"; }"
+}
+
+func buildLoaderFailureMessage(
+	runErr error,
+	exitCode int,
+	executable string,
+	workingDirectory string,
+	output string,
+	outputTruncated bool,
+) string {
+	detail := fmt.Sprintf("loader execution failed with exit code %d", exitCode)
+	if runErr != nil {
+		detail = fmt.Sprintf("loader execution failed: %v (exit code %d)", runErr, exitCode)
+	}
+	detail += fmt.Sprintf("\nExecutable: %s\nWorking directory: %s", executable, workingDirectory)
+	if strings.TrimSpace(output) == "" {
+		return detail + "\nNo stdout or stderr was captured from the loader process."
+	}
+	if outputTruncated {
+		detail += "\nThe captured stdout/stderr exceeded the 2 MiB API limit and was truncated."
+	}
+	return detail + "\nSee the captured combined stdout/stderr below for the loader's full diagnostic message."
 }
 
 func loaderExecutionLocation(getenv func(string) string) (string, string, error) {

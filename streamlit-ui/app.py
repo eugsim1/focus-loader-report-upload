@@ -753,8 +753,53 @@ def render_loader_job(job: LoaderJob) -> None:
         st.success(f"Loader execution completed with exit code {job.exit_code}.")
     else:
         st.error(job.error or f"Loader execution ended with status {job.status}.")
+
+    diagnostics_expanded = job.status in {"failed", "timed_out"}
+    with st.expander("Execution command and diagnostics", expanded=diagnostics_expanded):
+        st.json(
+            {
+                "jobId": job.job_id,
+                "status": job.status,
+                "exitCode": job.exit_code,
+                "startedAtUtc": job.started_at_utc,
+                "finishedAtUtc": job.finished_at_utc,
+                "executable": job.executable,
+                "workingDirectory": job.working_directory,
+                "TNS_ADMIN": job.tns_admin,
+                "HOME": job.home_directory,
+                "PATH": job.path_environment,
+                "databaseUser": job.database_user,
+                "databaseAlias": job.database_alias,
+                "outputTruncated": job.output_truncated,
+            }
+        )
+        if job.command_line:
+            st.markdown("#### Exact backend command")
+            st.caption(
+                "This is the executable and argument list used by the Go backend. "
+                "With database-password authentication, -dp-stdin receives the password "
+                "through standard input; the password is never displayed."
+            )
+            st.code(job.command_line, language="bash", wrap_lines=True)
+        if job.manual_command:
+            st.markdown("#### Copy/paste command for a manual test")
+            st.caption(
+                "Run this one-line Bash command as the selected Linux execution user. "
+                "It changes to the backend working directory and securely prompts for "
+                "the database password when required."
+            )
+            st.code(job.manual_command, language="bash", wrap_lines=True)
+
     if job.output:
+        st.markdown("#### Captured loader stdout and stderr")
+        if job.output_truncated:
+            st.warning(
+                "The loader produced more than 2 MiB of console output. The API response "
+                "contains the bounded capture and marks it as truncated."
+            )
         st.code(job.output, language="text", wrap_lines=True)
+    elif job.status in {"failed", "timed_out"}:
+        st.warning("The loader process failed without writing to stdout or stderr.")
 
 
 def render_loader_execution(api_url: str) -> None:
@@ -801,7 +846,12 @@ def render_loader_execution(api_url: str) -> None:
         )
         return
 
+    st.markdown("#### Validated command preview")
     st.code(st.session_state.get("loader_command", ""), language="bash", wrap_lines=True)
+    st.caption(
+        "After the job starts, this tab displays the exact backend command and a "
+        "copy/paste one-line command for reproducing the execution manually."
+    )
     st.caption(
         f"Target: {config.database_user}@{config.database_alias}; "
         f"workers={config.workers}; authentication={config.database_auth_mode}."

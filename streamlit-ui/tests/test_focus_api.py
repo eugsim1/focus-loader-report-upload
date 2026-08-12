@@ -30,11 +30,11 @@ class RecordingOpener:
 class FocusAPIClientTests(unittest.TestCase):
     def test_health(self):
         opener = RecordingOpener(
-            {"status": "ok", "version": "26.11.0-schema-stats-reset"}
+            {"status": "ok", "version": "26.12.0-loader-diagnostics"}
         )
         result = FocusAPIClient("http://127.0.0.1:8080/", opener=opener).health()
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.version, "26.11.0-schema-stats-reset")
+        self.assertEqual(result.version, "26.12.0-loader-diagnostics")
         self.assertEqual(opener.urls[0][0], "http://127.0.0.1:8080/api/v1/health")
 
     def test_aliases(self):
@@ -263,7 +263,15 @@ class FocusAPIClientTests(unittest.TestCase):
                 "services": [],
                 "analyticsUpdatedAtUtc": "2026-08-10T12:01:00Z",
                 "analyticsError": "",
+                "executable": "/opt/focus-loader/focus-loader-report-upload",
+                "workingDirectory": "/opt/focus-loader",
+                "commandLine": "'/opt/focus-loader/focus-loader-report-upload' '-dp-stdin'",
+                "manualCommand": "cd -- '/opt/focus-loader' && secure-command",
+                "tnsAdmin": "/home/oracle/adb_wallet",
+                "homeDirectory": "/home/oracle",
+                "pathEnvironment": "/usr/local/bin:/usr/bin",
                 "output": "Completed",
+                "outputTruncated": False,
                 "error": "",
             }
         )
@@ -273,6 +281,11 @@ class FocusAPIClientTests(unittest.TestCase):
         self.assertTrue(result.terminal)
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(result.output, "Completed")
+        self.assertIn("-dp-stdin", result.command_line)
+        self.assertIn("secure-command", result.manual_command)
+        self.assertEqual(result.working_directory, "/opt/focus-loader")
+        self.assertEqual(result.tns_admin, "/home/oracle/adb_wallet")
+        self.assertFalse(result.output_truncated)
         self.assertEqual(
             opener.urls[0][0],
             "http://127.0.0.1:8080/api/v1/loader/jobs/safe-job-token",

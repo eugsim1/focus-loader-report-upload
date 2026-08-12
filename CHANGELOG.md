@@ -1,5 +1,23 @@
 # Changelog
 
+## 26.12.0-loader-diagnostics
+
+- Expanded loader-job API results with the exact backend executable and
+  arguments, working directory, relevant `HOME`, `TNS_ADMIN`, and `PATH`
+  values, exit code, and an explicit output-truncation flag.
+- Added a secure, one-line manual reproduction command. Direct database
+  passwords are requested with a hidden terminal prompt and piped to
+  `-dp-stdin`; neither the API result nor the displayed command contains the
+  password.
+- Reworked the Streamlit **Execute loader** tab to show the validated preview,
+  exact backend command, copy/paste manual command, execution metadata, and a
+  clearly labelled combined stdout/stderr panel.
+- Increased the bounded loader console capture from 512 KiB to 2 MiB and made
+  failed-job messages identify the executable and working directory when the
+  child process returns only `exit status 1`.
+- Added Go and Python regression coverage for command diagnostics, password
+  redaction, manual reproduction, and output metadata.
+
 ## 26.11.0-schema-stats-reset
 
 - Added a sidebar **Reset interface** button that clears all Streamlit form,

@@ -452,3 +452,9 @@ func (output *boundedDeploymentOutput) String() string {
 	}
 	return value
 }
+
+func (output *boundedDeploymentOutput) Truncated() bool {
+	output.mu.Lock()
+	defer output.mu.Unlock()
+	return output.truncated
+}

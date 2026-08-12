@@ -155,7 +155,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.11.0-schema-stats-reset"
+  "version": "26.12.0-loader-diagnostics"
 }
 ```
 
@@ -292,7 +292,8 @@ GET /api/v1/loader/jobs/<jobId>
 ```
 
 The response reports `starting`, `running`, `succeeded`, `failed`, or
-`timed_out`; start/finish times; exit code; bounded redacted output; and
+`timed_out`; start/finish times; exit code; up to 2 MiB of combined, redacted
+stdout/stderr; `outputTruncated`; and
 `initialRowCount`, `currentRowCount`, and `rowsInserted` values with availability
 flags. `rowsInserted` is the current `TEMP_OCI_FOCUS` count minus the count read
 immediately before the child loader starts. Oracle commits become visible on
@@ -304,7 +305,10 @@ Monthly entries contain `month`, `billingCurrency`, and a decimal-string
 rounding. When the committed row count is zero, the backend returns empty
 arrays and skips both analytics queries until rows become visible. Missing or
 `null` analytics fields from a transitional backend are also interpreted as an
-empty not-yet-populated snapshot. Only one loader job can run at a time, jobs
+empty not-yet-populated snapshot. It also returns `executable`,
+`workingDirectory`, `commandLine`, `manualCommand`, `tnsAdmin`, `homeDirectory`,
+and `pathEnvironment`. The direct-password manual command contains a hidden
+prompt and `-dp-stdin`, never the credential. Only one loader job can run at a time, jobs
 time out after 24 hours, and completed status and its final analytics snapshot
 are retained in memory for two hours.
 
@@ -348,7 +352,7 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 ## 1. Build and install the updated Go backend
 
 The execution, cost, and schema-statistics tabs require the
-`26.11.0-schema-stats-reset` Go API and UI to be installed together.
+`26.12.0-loader-diagnostics` Go API and UI to be installed together.
 
 ```bash
 cd /home/oracle/focus-loader-report-upload
@@ -364,7 +368,7 @@ dist/focus-loader-report-upload-linux-amd64 -version
 Expected version:
 
 ```text
-focus-loader-report-upload 26.11.0-schema-stats-reset
+focus-loader-report-upload 26.12.0-loader-diagnostics
 ```
 
 ## 2. Verify TNS permissions
@@ -685,7 +689,15 @@ The downloaded script is never run automatically.
 5. Keep the page open. The status fragment refreshes every five seconds and
    shows job state, `TEMP_OCI_FOCUS` total rows, and rows inserted since the
    baseline captured immediately before execution.
-6. When the job ends, review the exit code and bounded, redacted console output.
+6. Expand **Execution command and diagnostics** to see the exact command used
+   by the backend, executable, working directory, `HOME`, `TNS_ADMIN`, `PATH`,
+   timestamps, exit code, and output-truncation status.
+7. Copy the generated one-line manual command to reproduce the run as the
+   selected Linux user. Password mode prompts invisibly and uses `-dp-stdin`;
+   the password never appears in the displayed command or process arguments.
+8. Review **Captured loader stdout and stderr** for the complete bounded
+   console diagnostics. The capture limit is 2 MiB and the UI reports when it
+   was exceeded.
 
 The Go service runs only `FOCUS_LOADER_EXECUTABLE` with structured arguments and
 `FOCUS_LOADER_WORK_DIR`; it ignores the executable text used by the preview.
@@ -1000,7 +1012,7 @@ sudo grep '^FOCUS_API_URL' /etc/focus-loader/streamlit.env
 ```
 
 An older binary does not provide schema statistics; install the
-`26.11.0-schema-stats-reset` binary before using the current interface.
+`26.12.0-loader-diagnostics` binary before using the current interface.
 
 ### The alias endpoint returns an error
 
