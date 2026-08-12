@@ -1,9 +1,21 @@
 # Oracle Linux 8 Streamlit deployment through OCI Bastion
 
-This deployment package uses the existing `../streamlit-ui` application.  It
-does not expose Streamlit on the VCN or the public internet.  The application
-listens only on `127.0.0.1:8501` on the Linux server, and the laptop reaches it
-through a local SSH forward over an OCI Bastion **managed SSH** session.
+This deployment package uses the existing `../streamlit-ui` application. It
+does not expose services on the VCN or public internet. The shared PowerShell
+launcher now opens one OCI Bastion **managed SSH** session with loopback-only
+forwards for remote ports 22, 8501, 8502, and 5901, plus two optional ports.
+
+```text
+127.0.0.1:22   -> OCI Bastion -> Compute 127.0.0.1:22
+127.0.0.1:8501 -> OCI Bastion -> Compute 127.0.0.1:8501
+127.0.0.1:8502 -> OCI Bastion -> Compute 127.0.0.1:8502
+127.0.0.1:5901 -> OCI Bastion -> Compute 127.0.0.1:5901
+```
+
+`-SshLocalPort` changes only the local side of the SSH mapping.
+`-OptionalPort1` and `-OptionalPort2` create same-number local/remote mappings;
+zero disables them. The legacy `-LocalPort`/`-RemotePort` pair can add one
+custom mapping. Every listener remains explicitly bound to `127.0.0.1`.
 
 ## Result
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## 26.15.0-multi-port-bastion-tunnels
+
+- Expanded the shared Windows Bastion launcher to forward remote ports 22,
+  8501, 8502, and 5901 in one loopback-only SSH process.
+- Added `SshLocalPort`, `OptionalPort1`, and `OptionalPort2`; optional ports are
+  read from the validated parameter file and use same-number local/remote
+  mappings. Retained `LocalPort`/`RemotePort` as a legacy custom mapping.
+- Added strict `-ParameterFile` support to the Windows browser-authentication
+  wrapper and committed sanitized `output_settings.example.txt` templates for
+  both Windows authentication modes.
+- Added Linux API-key and browser-authentication launchers with the same fixed
+  and optional tunnel set, validated `Name=Value` settings, dry-run support,
+  temporary Bastion-session cleanup, and dedicated README files.
+- Documented complete Windows CMD and Linux shell one-line commands, privileged
+  Linux local-port handling, profile replacement, browser-token reuse, VNC,
+  Streamlit, SSH, security, and troubleshooting guidance.
+- Ignored every `output_settings.txt` so infrastructure identifiers and local
+  key paths cannot be committed accidentally.
+
 ## 26.14.0-streamlit-run-diagnostics
 
 - Added the installed backend release version and a GitHub releases link to the

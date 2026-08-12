@@ -1,0 +1,28 @@
+# Copy to output_settings.txt, replace placeholders, chmod 600, and never commit the copy.
+AssetsVersion=1
+BastionId=ocid1.bastion.oc1.eu-frankfurt-1.REPLACE
+InstanceId=ocid1.instance.oc1.eu-frankfurt-1.REPLACE
+PrivateIp=10.30.1.10
+Region=eu-frankfurt-1
+SshPrivateKeyPath=$HOME/.ssh/bastion_ed25519
+SshPublicKeyPath=$HOME/.ssh/bastion_ed25519.pub
+ProfileName=BASTION
+OciConfigFilePath=$HOME/.oci/config
+TenancyName=
+IdentityProviderName=
+SessionExpirationMinutes=60
+BastionSessionTtl=3600
+# Use 2222 on Linux to reach remote port 22 without a privileged local bind.
+SshLocalPort=2222
+OptionalPort1=0
+OptionalPort2=0
+LocalPort=0
+RemotePort=0
+WaitSeconds=1200
+PollSeconds=10
+TargetUser=oracle
+OciExecutable=oci
+SshExecutable=ssh
+UseExistingSession=false
+KeepSession=false
+DryRun=false

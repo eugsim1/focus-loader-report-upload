@@ -13,6 +13,7 @@ temporary interactive token is preferred.
 ```text
 windows-api-key-auth-streamlit/
 |-- connect-streamlit-api-key-auth.ps1
+|-- output_settings.example.txt
 `-- README.md
 ```
 
@@ -96,15 +97,23 @@ already exists with different values, the script stops. Review the difference,
 then explicitly allow replacement with `-ReplaceExistingProfile`.
 
 After configuration, the wrapper uses the profile to inspect the Bastion,
-create and activate a managed-SSH session, and start:
+create and activate a managed-SSH session, and start these loopback-only
+forwards in one SSH process:
 
 ```text
+127.0.0.1:22   -> OCI Bastion -> Compute 127.0.0.1:22
 127.0.0.1:8501 -> OCI Bastion -> Compute 127.0.0.1:8501
+127.0.0.1:8502 -> OCI Bastion -> Compute 127.0.0.1:8502
+127.0.0.1:5901 -> OCI Bastion -> Compute 127.0.0.1:5901
+OptionalPort1  -> OCI Bastion -> same-number Compute port
+OptionalPort2  -> OCI Bastion -> same-number Compute port
 ```
 
-Keep PowerShell open and browse to `http://127.0.0.1:8501/`. Press Ctrl+C to
-close the tunnel. The created Bastion session is deleted unless `-KeepSession`
-is supplied.
+`SshLocalPort` controls only the laptop-side port mapped to remote SSH port 22.
+The default is 22; use another local value such as 2222 if port 22 is already
+occupied. Keep PowerShell open and browse to `http://127.0.0.1:8501/` or
+`http://127.0.0.1:8502/`. Press Ctrl+C to close every forward. The created
+Bastion session is deleted unless `-KeepSession` is supplied.
 
 ## One-line CMD invocation
 
@@ -122,10 +131,11 @@ The connector also accepts the generated `Name=Value` inventory format through
 additional wrapper is required:
 
 ```cmd
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-api-key-auth-streamlit\connect-streamlit-api-key-auth.ps1" -ParameterFile "C:\path\to\output_assets.txt"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-api-key-auth-streamlit\connect-streamlit-api-key-auth.ps1" -ParameterFile "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-api-key-auth-streamlit\output_settings.txt" -ReplaceExistingProfile
 ```
 
-Example `output_assets.txt`:
+Copy `output_settings.example.txt` to the ignored `output_settings.txt`, then
+replace its placeholders. The relevant tunnel settings are:
 
 ```text
 # Local infrastructure metadata. Do not commit this file.
@@ -142,10 +152,12 @@ ApiKeyFingerprint=aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99
 ApiPrivateKeyPath=C:\Users\CURRENT_USER\.oci\oci_api_key.pem
 ProfileName=STREAMLIT_API_KEY
 OciConfigFilePath=C:\Users\CURRENT_USER\.oci\config
-ConnectorScriptPath=C:\path\to\connect-streamlit-api-key-auth.ps1
 BastionSessionTtl=3600
-LocalPort=8501
-RemotePort=8501
+SshLocalPort=22
+OptionalPort1=0
+OptionalPort2=0
+LocalPort=0
+RemotePort=0
 WaitSeconds=1200
 PollSeconds=10
 TargetUser=oracle
@@ -154,8 +166,12 @@ SshExecutable=ssh
 KeepSession=false
 ```
 
-`ConnectorScriptPath` is accepted for compatibility with the generated asset
-inventory but ignored because this connector is already running. Blank lines
+`OptionalPort1=0` and `OptionalPort2=0` disable the two optional forwards.
+Set either to a TCP port from 1 through 65535 to create a same-number local and
+remote forward. `LocalPort`/`RemotePort` are retained as a legacy custom mapping
+and must either both be zero or both be nonzero. `ConnectorScriptPath` remains
+accepted for compatibility with older generated inventories and is ignored.
+Blank lines
 and lines beginning with `#` or `;` are allowed. Unknown keys, duplicate keys,
 invalid values, and unsupported `AssetsVersion` values are rejected. Relative
 key/config paths are resolved from the parameter file's directory.
@@ -165,7 +181,7 @@ this validates the inventory without contacting OCI and uses a different local
 port without editing the file:
 
 ```cmd
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\connect-streamlit-api-key-auth.ps1" -ParameterFile "C:\path\to\output_assets.txt" -LocalPort 18501 -DryRun
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\connect-streamlit-api-key-auth.ps1" -ParameterFile "C:\path\to\output_settings.txt" -SshLocalPort 2222 -DryRun
 ```
 
 The parameter file contains infrastructure identifiers and local paths. It
@@ -196,7 +212,7 @@ creating a session, or starting SSH:
 
 | Parameter | Default | Purpose |
 |---|---:|---|
-| `-ParameterFile` | none | Read `Name=Value` parameters from an `output_assets.txt` inventory. |
+| `-ParameterFile` | none | Read validated `Name=Value` settings from `output_settings.txt` or a compatible asset inventory. |
 | `-OciUserId` | required | IAM user OCID registered with the public API key. |
 | `-OciTenancyId` | required | OCI tenancy OCID. |
 | `-ApiKeyFingerprint` | required | 16-byte colon-separated fingerprint shown in OCI. |
@@ -205,7 +221,10 @@ creating a session, or starting SSH:
 | `-OciConfigFilePath` | `%USERPROFILE%\.oci\config` | Alternate Windows OCI configuration file. |
 | `-ReplaceExistingProfile` | off | Replace only the named profile after backing up the config. |
 | `-BastionSessionTtl` | `3600` | Managed-SSH session duration in seconds. |
-| `-LocalPort` | `8501` | Laptop loopback port. |
+| `-SshLocalPort` | `22` | Laptop loopback port forwarded to Compute SSH port 22. |
+| `-OptionalPort1` | `0` | First optional same-number port; zero disables it. |
+| `-OptionalPort2` | `0` | Second optional same-number port; zero disables it. |
+| `-LocalPort`, `-RemotePort` | `0`, `0` | Backward-compatible extra custom mapping. |
 | `-TargetUser` | `oracle` | Compute operating-system account. |
 | `-KeepSession` | off | Retain the created Bastion session until TTL expiry. |
 

@@ -5,7 +5,7 @@ OCI browser login, creates a temporary `security_token` CLI profile, validates
 it, creates a managed-SSH session on an existing OCI Bastion, and opens a local
 Streamlit tunnel.
 
-The tunnel binds only to `127.0.0.1`. It does not expose ports 8501 or 8080 in
+The tunnels bind only to `127.0.0.1`. They do not expose ports in
 the VCN, NSG, security list, host firewall, or public internet.
 
 ## Files
@@ -13,6 +13,7 @@ the VCN, NSG, security list, host firewall, or public internet.
 ```text
 windows-browser-auth-streamlit/
 |-- connect-streamlit-browser-auth.ps1
+|-- output_settings.example.txt
 `-- README.md
 ```
 
@@ -65,13 +66,19 @@ The script opens the browser login. After authentication it validates the new
 profile, creates the managed-SSH session, waits for `ACTIVE`, and starts:
 
 ```text
+127.0.0.1:22   -> OCI Bastion -> Compute 127.0.0.1:22
 127.0.0.1:8501 -> OCI Bastion -> Compute 127.0.0.1:8501
+127.0.0.1:8502 -> OCI Bastion -> Compute 127.0.0.1:8502
+127.0.0.1:5901 -> OCI Bastion -> Compute 127.0.0.1:5901
+OptionalPort1  -> OCI Bastion -> same-number Compute port
+OptionalPort2  -> OCI Bastion -> same-number Compute port
 ```
 
 Keep PowerShell open and browse to:
 
 ```text
 http://127.0.0.1:8501/
+http://127.0.0.1:8502/
 ```
 
 Press Ctrl+C to stop SSH. The wrapper deletes the Bastion session it created
@@ -85,6 +92,20 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\root\Documents
 
 This command contains deployment-specific OCIDs and local paths. Keep the SSH
 private key itself only on the laptop and never add it to the repository.
+
+## One-line CMD invocation with a parameter file
+
+Copy `output_settings.example.txt` to the ignored `output_settings.txt`, replace
+the placeholders, and run this single line from CMD:
+
+```cmd
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-browser-auth-streamlit\connect-streamlit-browser-auth.ps1" -ParameterFile "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-browser-auth-streamlit\output_settings.txt"
+```
+
+The browser wrapper now accepts the same strict `Name=Value` parameter-file
+workflow as the API-key wrapper. Command-line values override file values.
+Unknown or duplicate keys are rejected. Set `UseExistingSession=true` in the
+file or pass `-UseExistingSession` to reuse a valid token.
 
 ## Reuse or refresh the token
 
@@ -131,6 +152,7 @@ contacting OCI, creating a session, or starting SSH:
 
 | Parameter | Default | Purpose |
 |---|---:|---|
+| `-ParameterFile` | none | Validated `Name=Value` settings file. |
 | `-ProfileName` | `BASTION` | Security-token profile created by browser authentication. |
 | `-SessionExpirationMinutes` | `60` | OCI login token duration, from 5 through 60 minutes. |
 | `-UseExistingSession` | off | Validate and reuse the current token instead of opening a browser. |
@@ -138,7 +160,10 @@ contacting OCI, creating a session, or starting SSH:
 | `-TenancyName` | empty | Optional tenancy selection for browser authentication. |
 | `-IdentityProviderName` | empty | Optional federated identity-provider selection. |
 | `-BastionSessionTtl` | `3600` | Managed-SSH session lifetime in seconds. |
-| `-LocalPort` | `8501` | Laptop loopback port. Use 18501 if 8501 is busy. |
+| `-SshLocalPort` | `22` | Laptop loopback port forwarded to Compute SSH port 22. |
+| `-OptionalPort1` | `0` | First optional same-number port; zero disables it. |
+| `-OptionalPort2` | `0` | Second optional same-number port; zero disables it. |
+| `-LocalPort`, `-RemotePort` | `0`, `0` | Backward-compatible extra custom mapping. |
 | `-TargetUser` | `oracle` | Operating-system account on the Compute instance. |
 | `-KeepSession` | off | Do not delete the new Bastion session when SSH exits. |
 | `-Verbose` | off | Show the OCI commands being executed. |
@@ -180,13 +205,11 @@ group policies before changing the script.
 Get-NetTCPConnection -LocalPort 8501 -State Listen
 ```
 
-Then select another laptop port:
+If local SSH port 22 is occupied, select another laptop port for remote SSH:
 
 ```powershell
--LocalPort 18501
+-SshLocalPort 2222
 ```
-
-Browse to `http://127.0.0.1:18501/`.
 
 ### Session becomes ACTIVE but SSH fails
 

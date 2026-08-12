@@ -57,11 +57,16 @@ jobs:
             scripts/test-schema-deployment-wrapper.sh \
             scripts/force-sync-remote.sh \
             scripts/test-force-sync-remote.sh \
+            scripts/oci-bastion-tunnel-common.sh \
+            scripts/test-oci-bastion-tunnel-launchers.sh \
+            linux-api-key-auth-streamlit/connect-streamlit-api-key-auth.sh \
+            linux-browser-auth-streamlit/connect-streamlit-browser-auth.sh \
             sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh \
             sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
           bash scripts/test-rewrite-oci-config-paths.sh
           bash scripts/test-schema-deployment-wrapper.sh
           bash scripts/test-force-sync-remote.sh
+          bash scripts/test-oci-bastion-tunnel-launchers.sh
 
       - name: Validate PowerShell Windows authentication launchers
         shell: pwsh
@@ -138,6 +143,9 @@ jobs:
             "OciConfigFilePath=$(Join-Path $env:RUNNER_TEMP 'parameter-file-oci-config')",
             'ConnectorScriptPath=ignored-by-this-connector.ps1',
             'BastionSessionTtl=3600',
+            'SshLocalPort=2222',
+            'OptionalPort1=18888',
+            'OptionalPort2=19000',
             'LocalPort=18507',
             'RemotePort=8501',
             'WaitSeconds=1200',
@@ -149,6 +157,12 @@ jobs:
           ) | Set-Content -LiteralPath $parameterFile
           $parameterDryRun = & $apiKeyScript -ParameterFile $parameterFile -DryRun *>&1 | Out-String
           if (-not $parameterDryRun.Contains('Loaded API-key parameters from:') -or
+              -not $parameterDryRun.Contains('127.0.0.1:2222') -or
+              -not $parameterDryRun.Contains('127.0.0.1:8501') -or
+              -not $parameterDryRun.Contains('127.0.0.1:8502') -or
+              -not $parameterDryRun.Contains('127.0.0.1:5901') -or
+              -not $parameterDryRun.Contains('127.0.0.1:18888') -or
+              -not $parameterDryRun.Contains('127.0.0.1:19000') -or
               -not $parameterDryRun.Contains('127.0.0.1:18507')) {
             throw "Parameter-file dry run did not load or forward its values:`n$parameterDryRun"
           }

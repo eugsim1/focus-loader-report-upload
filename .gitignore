@@ -23,6 +23,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 **/output_assets.txt
+**/output_settings.txt
 
 # Build outputs
 dist/*

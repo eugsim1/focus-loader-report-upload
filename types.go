@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.14.0-streamlit-run-diagnostics"
+	version       = "26.15.0-multi-port-bastion-tunnels"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

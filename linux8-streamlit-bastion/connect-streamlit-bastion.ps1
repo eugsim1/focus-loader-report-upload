@@ -1,12 +1,13 @@
 <#
 .SYNOPSIS
-Creates an OCI Bastion managed-SSH session and opens a local Streamlit tunnel.
+Creates an OCI Bastion managed-SSH session and opens loopback-only local tunnels.
 
 .DESCRIPTION
 The script reuses an existing OCI Bastion service, creates a time-limited
 managed-SSH session to an existing private Compute instance, waits for the
 session to become ACTIVE, and runs OpenSSH in the foreground with a loopback-
-only local forward. Press Ctrl+C to close the tunnel. By default, the newly
+only local forwards. The fixed remote ports are 22, 8501, 8502, and 5901;
+two additional same-number ports can be supplied. Press Ctrl+C to close the tunnel. By default, the newly
 created Bastion session is deleted when SSH exits.
 
 .EXAMPLE
@@ -54,10 +55,19 @@ param(
     [int]$SessionTtl = 10800,
 
     [ValidateRange(1, 65535)]
-    [int]$LocalPort = 8501,
+    [int]$SshLocalPort = 22,
 
-    [ValidateRange(1, 65535)]
-    [int]$RemotePort = 8501,
+    [ValidateRange(0, 65535)]
+    [int]$OptionalPort1 = 0,
+
+    [ValidateRange(0, 65535)]
+    [int]$OptionalPort2 = 0,
+
+    [ValidateRange(0, 65535)]
+    [int]$LocalPort = 0,
+
+    [ValidateRange(0, 65535)]
+    [int]$RemotePort = 0,
 
     [ValidateRange(60, 3600)]
     [int]$WaitSeconds = 1200,
@@ -187,6 +197,51 @@ function Test-LocalPortInUse {
     return ($listeners | Where-Object { $_.Port -eq $Port } | Select-Object -First 1) -ne $null
 }
 
+function Add-ForwardMapping {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [System.Collections.Generic.List[object]]$Mappings,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$LocalPorts,
+        [Parameter(Mandatory = $true)]
+        [int]$Local,
+        [Parameter(Mandatory = $true)]
+        [int]$Remote
+    )
+
+    if ($Local -lt 1 -or $Local -gt 65535 -or $Remote -lt 1 -or $Remote -gt 65535) {
+        throw "Tunnel ports must be from 1 through 65535: local=$Local remote=$Remote"
+    }
+    $localKey = $Local.ToString()
+    if ($LocalPorts.ContainsKey($localKey)) {
+        if ([int]$LocalPorts[$localKey] -eq $Remote) {
+            return
+        }
+        throw "Local TCP port $Local is assigned to more than one remote port."
+    }
+    $LocalPorts[$localKey] = $Remote
+    $Mappings.Add([pscustomobject]@{ Local = $Local; Remote = $Remote })
+}
+
+$forwardMappings = New-Object 'System.Collections.Generic.List[object]'
+$forwardLocalPorts = @{}
+Add-ForwardMapping -Mappings $forwardMappings -LocalPorts $forwardLocalPorts -Local $SshLocalPort -Remote 22
+foreach ($fixedPort in @(8501, 8502, 5901)) {
+    Add-ForwardMapping -Mappings $forwardMappings -LocalPorts $forwardLocalPorts -Local $fixedPort -Remote $fixedPort
+}
+foreach ($optionalPort in @($OptionalPort1, $OptionalPort2)) {
+    if ($optionalPort -gt 0) {
+        Add-ForwardMapping -Mappings $forwardMappings -LocalPorts $forwardLocalPorts -Local $optionalPort -Remote $optionalPort
+    }
+}
+if (($LocalPort -eq 0) -xor ($RemotePort -eq 0)) {
+    throw 'LocalPort and RemotePort must both be zero or both be supplied for a legacy custom mapping.'
+}
+if ($LocalPort -gt 0) {
+    Add-ForwardMapping -Mappings $forwardMappings -LocalPorts $forwardLocalPorts -Local $LocalPort -Remote $RemotePort
+}
+
 $privateKey = (Resolve-Path -LiteralPath $SshPrivateKeyPath -ErrorAction Stop).Path
 if (-not $SshPublicKeyPath) {
     $SshPublicKeyPath = "${privateKey}.pub"
@@ -209,11 +264,14 @@ if ($SessionDisplayName.Length -gt 255) {
 if ($SessionDisplayName -match '[\x00-\x1f\x7f]') {
     throw 'SessionDisplayName cannot contain control characters.'
 }
-if (Test-LocalPortInUse -Port $LocalPort) {
-    throw "Local TCP port $LocalPort is already in use. Choose another value with -LocalPort."
+foreach ($mapping in $forwardMappings) {
+    if (Test-LocalPortInUse -Port $mapping.Local) {
+        $portMessage = "Local TCP port $($mapping.Local) is already in use. Change SshLocalPort or an optional/legacy local port."
+        if ($DryRun) { Write-Warning $portMessage } else { throw $portMessage }
+    }
 }
 
-$browserUrl = "http://127.0.0.1:${LocalPort}/"
+$browserUrls = @('http://127.0.0.1:8501/', 'http://127.0.0.1:8502/')
 if ($DryRun) {
     Write-Host 'DRY RUN: no Bastion session or SSH process will be created.'
     Write-Host "Bastion:      $BastionId"
@@ -224,8 +282,11 @@ if ($DryRun) {
     if ($OciConfigFilePath) {
         Write-Host "OCI config:   $OciConfigFilePath"
     }
-    Write-Host "Local tunnel: 127.0.0.1:${LocalPort} -> 127.0.0.1:${RemotePort}"
-    Write-Host "Browser URL:  $browserUrl"
+    Write-Host 'Loopback-only tunnels:'
+    foreach ($mapping in $forwardMappings) {
+        Write-Host "  127.0.0.1:$($mapping.Local) -> 127.0.0.1:$($mapping.Remote)"
+    }
+    Write-Host "Browser URLs: $($browserUrls -join ', ')"
     return
 }
 
@@ -328,10 +389,16 @@ try {
 
     $bastionHost = "host.bastion.$Region.oci.oraclecloud.com"
     $proxyCommand = "ssh -i `"$privateKey`" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -W %h:%p -p 22 ${sessionId}@${bastionHost}"
-    $forwardSpec = "127.0.0.1:${LocalPort}:127.0.0.1:${RemotePort}"
     $sshArguments = @(
-        '-N',
-        '-L', $forwardSpec,
+        '-N'
+    )
+    $forwardSpecs = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($mapping in $forwardMappings) {
+        $forwardSpec = "127.0.0.1:$($mapping.Local):127.0.0.1:$($mapping.Remote)"
+        $forwardSpecs.Add($forwardSpec)
+        $sshArguments += @('-L', $forwardSpec)
+    }
+    $sshArguments += @(
         '-i', $privateKey,
         '-o', 'IdentitiesOnly=yes',
         '-o', 'StrictHostKeyChecking=accept-new',
@@ -344,8 +411,9 @@ try {
     )
 
     Write-Host "Bastion session is ACTIVE: $sessionId"
-    Write-Host "Starting loopback-only tunnel: $forwardSpec"
-    Write-Host "Keep this PowerShell window open and browse to $browserUrl"
+    Write-Host 'Starting loopback-only tunnels:'
+    foreach ($forwardSpec in $forwardSpecs) { Write-Host "  $forwardSpec" }
+    Write-Host "Keep this PowerShell window open. Browser URLs: $($browserUrls -join ', ')"
     Write-Host 'Press Ctrl+C to close the tunnel.'
 
     & $resolvedSshExecutable @sshArguments
