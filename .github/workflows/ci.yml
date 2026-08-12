@@ -206,6 +206,7 @@ jobs:
             -SshPrivateKeyPath $privateKey `
             -OciExecutable $ociMock `
             -SshExecutable '/usr/bin/true' `
+            -SshLocalPort 18222 `
             -LocalPort 18504 `
             -WaitSeconds 60 `
             -PollSeconds 1
@@ -219,6 +220,7 @@ jobs:
             -UseExistingSession `
             -OciExecutable $ociMock `
             -SshExecutable '/usr/bin/true' `
+            -SshLocalPort 18223 `
             -LocalPort 18505 `
             -WaitSeconds 60 `
             -PollSeconds 1
@@ -237,6 +239,7 @@ jobs:
             -OciConfigFilePath $apiConfig `
             -OciExecutable $ociMock `
             -SshExecutable '/usr/bin/true' `
+            -SshLocalPort 18224 `
             -LocalPort 18506 `
             -WaitSeconds 60 `
             -PollSeconds 1
