@@ -111,15 +111,22 @@ run only the server-configured
 browser-supplied command, script path, TNS path, alias, config path, or SQL text.
 The versioned `POST /api/v1/loader/jobs` endpoint accepts only validated
 structured loader fields, starts the fixed `FOCUS_LOADER_EXECUTABLE`, and exposes
-status at `GET /api/v1/loader/jobs/<jobId>`. Immediately before each accepted
-job, it empties only `FOCUS_LOADER_WORK_DIR/work_report_dir` for that selected
-backend user. Job snapshots stream up to 8 MiB of password-redacted combined
+status at `GET /api/v1/loader/jobs/<jobId>`. `GET /api/v1/loader/jobs` returns
+the active job ID and newest-first durable history. Immediately before each
+accepted job, it empties only ordinary content from
+`FOCUS_LOADER_WORK_DIR/work_report_dir` for that selected backend user and
+preserves the protected `.loader_job_history` child directory. Job snapshots
+stream up to 8 MiB of password-redacted combined
 stdout/stderr plus process-start/exit diagnostics and reset metadata. Its row
 monitor runs only a fixed
 `COUNT(*)` query plus fixed monthly `EFFECTIVE_COST` and distinct
 `SERVICE_NAME` queries against `TEMP_OCI_FOCUS` as the configured database
 user. Analytics refresh every 30 seconds while a job runs and are returned with
-the job snapshot.
+the job snapshot. History records contain UTC time, schema, status, row counts,
+rows inserted, and the ten newest unique filenames from
+`processed_files.jsonl`. The child process belongs to the systemd backend, so
+an SSH, Bastion, or browser disconnect does not require `nohup` and does not
+stop the job.
 
 The versioned `POST /api/v1/schema/stats` endpoint accepts a validated database
 login and schema owner, always targets only `TEMP_OCI_FOCUS`, and reports table

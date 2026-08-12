@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -159,7 +161,7 @@ func TestLoaderExecutionServiceReportsRowCountIncreaseAndRedactsOutput(t *testin
 		pollInterval:      time.Hour,
 		analyticsInterval: time.Hour,
 		timeout:           time.Minute,
-		retention:         time.Hour,
+		historyDirectory:  filepath.Join(workDirectory, workReportDir, loaderJobHistoryDirectoryName),
 		jobs:              make(map[string]*loaderExecutionJob),
 	}
 	started, err := service.start(testLoaderExecutionRequest())
@@ -206,6 +208,11 @@ func TestLoaderExecutionServiceReportsRowCountIncreaseAndRedactsOutput(t *testin
 	if strings.Contains(finished.Output, "runtime-test-secret") || !strings.Contains(finished.Output, "[REDACTED]") {
 		t.Fatalf("loader output was not redacted: %q", finished.Output)
 	}
+	persistedHistory, err := os.ReadFile(filepath.Join(service.historyDirectory, started.JobID+".json"))
+	if err != nil || strings.Contains(string(persistedHistory), "runtime-test-secret") ||
+		!strings.Contains(string(persistedHistory), "[REDACTED]") {
+		t.Fatalf("persisted loader history was missing or unsafe: error=%v content=%q", err, persistedHistory)
+	}
 	if captured.StdinPassword != "runtime-test-secret" {
 		t.Fatalf("direct password was not provided through stdin input: %#v", captured)
 	}
@@ -246,6 +253,91 @@ func TestResetLoaderWorkReportDirectoryClearsOnlySelectedUserReportDirectory(t *
 	}
 	if content, err := os.ReadFile(outside); err != nil || string(content) != "preserve" {
 		t.Fatalf("file outside work_report_dir changed: content=%q error=%v", content, err)
+	}
+}
+
+func TestResetLoaderWorkReportDirectoryPreservesPersistentJobHistory(t *testing.T) {
+	workingDirectory := t.TempDir()
+	reportDirectory := filepath.Join(workingDirectory, workReportDir)
+	historyDirectory := filepath.Join(reportDirectory, loaderJobHistoryDirectoryName)
+	if err := os.MkdirAll(historyDirectory, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	historyPath := filepath.Join(historyDirectory, "previous-job.json")
+	if err := os.WriteFile(historyPath, []byte(`{"jobId":"previous-job"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reportDirectory, "processed_files.jsonl"), []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := resetLoaderWorkReportDirectory(workingDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(historyPath); err != nil {
+		t.Fatalf("persistent loader history was removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(reportDirectory, "processed_files.jsonl")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ordinary work report state was not cleared: %v", err)
+	}
+}
+
+func TestLoaderJobHistoryPersistsAndRestoresInterruptedState(t *testing.T) {
+	historyDirectory := filepath.Join(t.TempDir(), loaderJobHistoryDirectoryName)
+	service := &loaderExecutionService{
+		historyDirectory: historyDirectory,
+		jobs: map[string]*loaderExecutionJob{
+			"persisted-job": {
+				id:                   "persisted-job",
+				status:               "running",
+				databaseUser:         "FOCUS_APP",
+				databaseAlias:        "FOCUS_HIGH",
+				createdAtUTC:         time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC),
+				startedAtUTC:         time.Date(2026, 8, 12, 10, 0, 1, 0, time.UTC),
+				currentRowCount:      125,
+				currentRowCountKnown: true,
+				rowsInserted:         25,
+				rowsInsertedKnown:    true,
+				lastFilesLoaded:      []string{"reports/focus-2026-08.csv.gz"},
+				finalOutput:          "safe diagnostic",
+			},
+		},
+		activeID: "persisted-job",
+	}
+	service.persistJob("persisted-job")
+
+	restored := &loaderExecutionService{
+		historyDirectory: historyDirectory,
+		jobs:             make(map[string]*loaderExecutionJob),
+	}
+	restored.loadPersistedJobs()
+	response, ok := restored.snapshot("persisted-job")
+	if !ok || response.Status != "interrupted" || response.RowsInserted != 25 ||
+		len(response.LastFilesLoaded) != 1 || response.LastFilesLoaded[0] != "reports/focus-2026-08.csv.gz" {
+		t.Fatalf("unexpected restored loader history: %#v", response)
+	}
+	if !strings.Contains(response.Error, "backend service restarted") {
+		t.Fatalf("interrupted job does not explain its last known state: %#v", response)
+	}
+}
+
+func TestReadLastLoadedFilesReturnsLatestUniqueFiles(t *testing.T) {
+	reportDirectory := t.TempDir()
+	var lines strings.Builder
+	for index := 0; index < loaderLastFilesLimit+2; index++ {
+		encoded, err := json.Marshal(processedRecord{FileName: fmt.Sprintf("file-%02d.csv.gz", index)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines.Write(encoded)
+		lines.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(reportDirectory, "processed_files.jsonl"), []byte(lines.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files := readLastLoadedFiles(reportDirectory)
+	if len(files) != loaderLastFilesLimit || files[0] != "file-02.csv.gz" || files[len(files)-1] != "file-11.csv.gz" {
+		t.Fatalf("unexpected latest loaded files: %#v", files)
 	}
 }
 
@@ -393,7 +485,7 @@ func TestLoaderExecutionRoutesAreRegisteredAndMethodRestricted(t *testing.T) {
 	collectionRequest := httptest.NewRequest(http.MethodGet, loaderJobCollectionPath, nil)
 	collectionResponse := httptest.NewRecorder()
 	handler.ServeHTTP(collectionResponse, collectionRequest)
-	if collectionResponse.Code != http.StatusMethodNotAllowed {
+	if collectionResponse.Code != http.StatusOK || !strings.Contains(collectionResponse.Body.String(), `"jobs":[]`) {
 		t.Fatalf("collection GET status=%d body=%s", collectionResponse.Code, collectionResponse.Body.String())
 	}
 

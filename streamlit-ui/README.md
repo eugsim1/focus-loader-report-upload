@@ -162,7 +162,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.15.0-multi-port-bastion-tunnels"
+  "version": "26.16.0-persistent-loader-history"
 }
 ```
 
@@ -301,8 +301,15 @@ A successful start returns HTTP `202` with an opaque `jobId`. Poll it with:
 GET /api/v1/loader/jobs/<jobId>
 ```
 
-The response reports `starting`, `running`, `succeeded`, `failed`, or
-`timed_out`; start/finish times; exit code; up to 8 MiB of combined, redacted
+List durable summaries and discover the active job after a reconnect with:
+
+```http
+GET /api/v1/loader/jobs
+```
+
+The response reports `starting`, `running`, `succeeded`, `failed`, `timed_out`,
+or restored `interrupted`; creation/start/finish times; exit code; up to 8 MiB
+of combined, redacted
 stdout/stderr; `outputTruncated`; and
 `initialRowCount`, `currentRowCount`, and `rowsInserted` values with availability
 flags. `rowsInserted` is the current `TEMP_OCI_FOCUS` count minus the count read
@@ -317,11 +324,16 @@ arrays and skips both analytics queries until rows become visible. Missing or
 `null` analytics fields from a transitional backend are also interpreted as an
 empty not-yet-populated snapshot. It also returns `executable`,
 `workingDirectory`, `commandLine`, `manualCommand`, `tnsAdmin`, `homeDirectory`,
-`pathEnvironment`, `workReportDirectory`, and `workReportResetAtUtc`. The
+`pathEnvironment`, `workReportDirectory`, `workReportResetAtUtc`, and
+`lastFilesLoaded`. The
 direct-password manual command contains a hidden
-prompt and `-dp-stdin`, never the credential. Only one loader job can run at a time, jobs
-time out after 24 hours, and completed status and its final analytics snapshot
-are retained in memory for two hours.
+prompt and `-dp-stdin`, never the credential. Only one loader job can run at a
+time and jobs time out after 24 hours. Password-free snapshots are persisted in
+`work_report_dir/.loader_job_history`; `GET /api/v1/loader/jobs` returns the
+active job ID and newest-first history so a new Streamlit session can reconnect.
+Records are not expired automatically; monitor this directory and apply an
+operator-approved retention policy if long-term bounded-log storage is not
+required.
 
 `POST /api/v1/schema/stats` accepts the same `username`, `password`, and
 validated `schema` fields as the table-list request. The backend always uses
@@ -363,7 +375,7 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 ## 1. Build and install the updated Go backend
 
 The execution, cost, and schema-statistics tabs require the
-`26.15.0-multi-port-bastion-tunnels` Go API and UI to be installed together.
+`26.16.0-persistent-loader-history` Go API and UI to be installed together.
 
 ```bash
 cd /home/oracle/focus-loader-report-upload
@@ -379,7 +391,7 @@ dist/focus-loader-report-upload-linux-amd64 -version
 Expected version:
 
 ```text
-focus-loader-report-upload 26.15.0-multi-port-bastion-tunnels
+focus-loader-report-upload 26.16.0-persistent-loader-history
 ```
 
 ## 2. Verify TNS permissions
@@ -709,9 +721,11 @@ The downloaded script is never run automatically.
    `/home/oracle/focus-loader-report-upload/work_report_dir` for `oracle`.
    This deletes prior local checkpoints, reports, SQL*Loader logs, and retained
    work files in that directory. It never deletes the application directory.
-6. Keep the page open. The status fragment refreshes every five seconds and
+6. While the page is open, the status fragment refreshes every five seconds and
    shows job state, `TEMP_OCI_FOCUS` total rows, and rows inserted since the
-   baseline captured immediately before execution.
+   baseline captured immediately before execution. You may close the browser or
+   lose the Bastion tunnel: the systemd backend continues the loader without
+   `nohup`, and Streamlit resumes the active job after reconnection.
 7. Expand **Execution command and diagnostics** to see the exact command used
    by the backend, executable, working directory, `HOME`, `TNS_ADMIN`, `PATH`,
    timestamps, exit code, and output-truncation status.
@@ -722,6 +736,10 @@ The downloaded script is never run automatically.
    backend error and live combined stdout/stderr, plus a diagnostic header and
    process trailer. The capture limit is 8 MiB and the UI reports when it was
    exceeded. Select **Download full loader execution log** to save it.
+10. Use **Persistent execution history** to review time, schema, last known
+    state, row counts, rows inserted, and last loaded files. Choose a recorded
+    job and select **Open selected loader job** to restore its complete bounded
+    diagnostics and download.
 
 The Go service runs only `FOCUS_LOADER_EXECUTABLE` with structured arguments and
 `FOCUS_LOADER_WORK_DIR`; it ignores the executable text used by the preview.
@@ -740,8 +758,10 @@ record.
    `TEMP_OCI_FOCUS` rows.
 4. Review the sorted, unique service-name table and the current loaded-row
    metric.
-5. After the loader finishes, the final snapshot remains available with the job
-   result for up to two hours or until the backend service restarts.
+5. After the loader finishes, its password-free final snapshot and bounded log
+   remain in persistent history. A backend restart reloads the records; a job
+   that was active during that backend restart is shown as `interrupted` with
+   its last persisted counters and filenames.
 
 The tab is intentionally tied to the current or most recent GUI-started loader
 job, so it reuses only the credential already held by the active backend row
@@ -772,9 +792,9 @@ queries, closes the connection, and redacts the password from errors.
 
 Use **Reset interface** in the sidebar to clear forms, database authorization,
 command-builder values/results, loader-job references, statistics, and other
-Streamlit session state. This resets only the browser interface: an active
-loader job continues in the backend and can no longer be followed from that
-reset browser session.
+Streamlit session state. This resets only the browser interface. An active
+loader job continues in the backend and is rediscovered automatically from
+durable history when **Execute loader** renders again.
 
 ### Diagnostics tab
 
@@ -1046,7 +1066,7 @@ sudo grep '^FOCUS_API_URL' /etc/focus-loader/streamlit.env
 ```
 
 An older binary does not provide schema statistics; install the
-`26.15.0-multi-port-bastion-tunnels` binary before using the current interface.
+`26.16.0-persistent-loader-history` binary before using the current interface.
 
 ### The alias endpoint returns an error
 
@@ -1101,7 +1121,7 @@ sudo journalctl -u focus-loader-tns-gui.service -n 200 --no-pager
 ```
 
 An `ORA-01940` from an older installation means the target schema still has an
-active session. Version `26.15.0-multi-port-bastion-tunnels` locks the user,
+active session. Version `26.16.0-persistent-loader-history` locks the user,
 disconnects those sessions, and retries the drop. If it persists after upgrade,
 download the execution log and verify that the administrator can query
 `GV$SESSION` and run `ALTER SYSTEM DISCONNECT SESSION`.

@@ -26,6 +26,7 @@ from focus_api import (
     FocusAPIError,
     Health,
     LoaderJob,
+    LoaderJobHistory,
     SchemaDeployment,
     SchemaStatistics,
 )
@@ -150,6 +151,7 @@ def loader_execution_log(job: LoaderJob) -> str:
         f"Job ID: {job.job_id}",
         f"Status: {job.status}",
         f"Exit code: {job.exit_code if job.exit_code is not None else 'running'}",
+        f"Created UTC: {job.created_at_utc or 'unknown'}",
         f"Started UTC: {job.started_at_utc or 'not started'}",
         f"Finished UTC: {job.finished_at_utc or 'not finished'}",
         f"Executable: {job.executable}",
@@ -159,6 +161,7 @@ def loader_execution_log(job: LoaderJob) -> str:
         f"TNS_ADMIN: {job.tns_admin}",
         f"HOME: {job.home_directory}",
         f"Database target: {job.database_user}@{job.database_alias}",
+        f"Last files loaded: {', '.join(job.last_files_loaded) or '(none recorded)'}",
         f"Output truncated: {str(job.output_truncated).lower()}",
         "",
         "Exact backend command (password not included):",
@@ -823,6 +826,8 @@ def render_loader_job(job: LoaderJob) -> None:
             "The loader job is still monitored, but the latest table row-count query "
             f"failed: {job.row_count_error}"
         )
+    if job.last_files_loaded:
+        st.caption("Last loaded files: " + ", ".join(job.last_files_loaded))
     if job.status in {"starting", "running"}:
         st.info(
             "Execution is active. This panel refreshes every five seconds. "
@@ -839,6 +844,7 @@ def render_loader_job(job: LoaderJob) -> None:
             {
                 "jobId": job.job_id,
                 "status": job.status,
+                "createdAtUtc": job.created_at_utc,
                 "exitCode": job.exit_code,
                 "startedAtUtc": job.started_at_utc,
                 "finishedAtUtc": job.finished_at_utc,
@@ -851,6 +857,7 @@ def render_loader_job(job: LoaderJob) -> None:
                 "workReportResetAtUtc": job.work_report_reset_at_utc,
                 "databaseUser": job.database_user,
                 "databaseAlias": job.database_alias,
+                "lastFilesLoaded": list(job.last_files_loaded),
                 "outputTruncated": job.output_truncated,
             }
         )
@@ -899,6 +906,52 @@ def render_loader_job(job: LoaderJob) -> None:
     )
 
 
+def render_loader_history(history: LoaderJobHistory) -> str:
+    st.markdown("#### Persistent execution history")
+    st.caption(
+        "The backend stores password-free job snapshots on the Linux server. "
+        "A Bastion or browser timeout does not stop the loader, and this page "
+        "automatically reconnects to the active job when the tunnel returns."
+    )
+    if not history.jobs:
+        st.info("No loader execution has been recorded for this Linux user yet.")
+        return ""
+    st.dataframe(
+        [
+            {
+                "Time (UTC)": job.started_at_utc or job.created_at_utc,
+                "Schema": job.database_user,
+                "TNS alias": job.database_alias,
+                "Last known state": job.status,
+                "Rows inserted": (
+                    job.rows_inserted if job.rows_inserted_known else "Waiting"
+                ),
+                "Total rows": (
+                    job.current_row_count if job.current_row_count_known else "Waiting"
+                ),
+                "Last files loaded": ", ".join(job.last_files_loaded),
+            }
+            for job in history.jobs
+        ],
+        hide_index=True,
+        use_container_width=True,
+    )
+    history_by_id = {job.job_id: job for job in history.jobs}
+    selected_job_id = st.selectbox(
+        "Inspect a recorded loader job",
+        options=list(history_by_id),
+        format_func=lambda job_id: (
+            f"{history_by_id[job_id].started_at_utc or history_by_id[job_id].created_at_utc} | "
+            f"{history_by_id[job_id].database_user} | "
+            f"{history_by_id[job_id].status} | {job_id[:12]}"
+        ),
+        key="loader_history_selected_job",
+    )
+    if st.button("Open selected loader job", key="loader_history_open_job"):
+        return selected_job_id
+    return ""
+
+
 def render_loader_execution(api_url: str) -> None:
     st.subheader("Execute loader")
     st.caption(
@@ -906,7 +959,37 @@ def render_loader_execution(api_url: str) -> None:
         "submits validated fields, never a shell command or executable path."
     )
 
+    try:
+        history = FocusAPIClient(api_url, timeout_seconds=15.0).loader_job_history()
+    except FocusAPIError as error:
+        history = LoaderJobHistory(active_job_id="", jobs=())
+        st.warning(f"Loader history is temporarily unavailable: {error}")
+    requested_history_job = render_loader_history(history)
+    if requested_history_job:
+        try:
+            restored_job = FocusAPIClient(
+                api_url, timeout_seconds=15.0
+            ).loader_job(requested_history_job)
+        except FocusAPIError as error:
+            st.error(f"The selected loader job could not be opened: {error}")
+        else:
+            st.session_state["loader_job_last"] = restored_job
+            if not restored_job.terminal:
+                st.session_state["loader_job_id"] = restored_job.job_id
+            st.rerun()
+
     active_job_id = st.session_state.get("loader_job_id")
+    if history.active_job_id:
+        active_job_id = history.active_job_id
+        st.session_state["loader_job_id"] = active_job_id
+    elif not isinstance(st.session_state.get("loader_job_last"), LoaderJob) and history.jobs:
+        try:
+            st.session_state["loader_job_last"] = FocusAPIClient(
+                api_url, timeout_seconds=15.0
+            ).loader_job(history.jobs[0].job_id)
+        except FocusAPIError as error:
+            st.warning(f"The most recent loader result could not be restored: {error}")
+
     if isinstance(active_job_id, str) and active_job_id:
 
         @st.fragment(run_every="5s")

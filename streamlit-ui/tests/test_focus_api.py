@@ -30,11 +30,11 @@ class RecordingOpener:
 class FocusAPIClientTests(unittest.TestCase):
     def test_health(self):
         opener = RecordingOpener(
-            {"status": "ok", "version": "26.15.0-multi-port-bastion-tunnels"}
+            {"status": "ok", "version": "26.16.0-persistent-loader-history"}
         )
         result = FocusAPIClient("http://127.0.0.1:8080/", opener=opener).health()
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.version, "26.15.0-multi-port-bastion-tunnels")
+        self.assertEqual(result.version, "26.16.0-persistent-loader-history")
         self.assertEqual(opener.urls[0][0], "http://127.0.0.1:8080/api/v1/health")
 
     def test_aliases(self):
@@ -303,6 +303,56 @@ class FocusAPIClientTests(unittest.TestCase):
         self.assertEqual(
             opener.urls[0][0],
             "http://127.0.0.1:8080/api/v1/loader/jobs/safe-job-token",
+        )
+
+    def test_loader_job_history_parses_active_and_completed_runs(self):
+        opener = RecordingOpener(
+            {
+                "activeJobId": "running-job",
+                "jobs": [
+                    {
+                        "jobId": "running-job",
+                        "createdAtUtc": "2026-08-12T10:00:00Z",
+                        "startedAtUtc": "2026-08-12T10:00:01Z",
+                        "finishedAtUtc": "",
+                        "databaseUser": "FOCUS_APP",
+                        "databaseAlias": "FOCUS_HIGH",
+                        "status": "running",
+                        "rowsInserted": 25,
+                        "rowsInsertedKnown": True,
+                        "currentRowCount": 125,
+                        "currentRowCountKnown": True,
+                        "lastFilesLoaded": ["reports/focus-2026-08.csv.gz"],
+                    },
+                    {
+                        "jobId": "old-job",
+                        "createdAtUtc": "2026-08-11T10:00:00Z",
+                        "startedAtUtc": "2026-08-11T10:00:01Z",
+                        "finishedAtUtc": "2026-08-11T10:05:00Z",
+                        "databaseUser": "FOCUS_APP_OLD",
+                        "databaseAlias": "FOCUS_HIGH",
+                        "status": "succeeded",
+                        "rowsInserted": 50,
+                        "rowsInsertedKnown": True,
+                        "currentRowCount": 50,
+                        "currentRowCountKnown": True,
+                        "lastFilesLoaded": [],
+                    },
+                ],
+            }
+        )
+        result = FocusAPIClient(
+            "http://127.0.0.1:8080", opener=opener
+        ).loader_job_history()
+        self.assertEqual(result.active_job_id, "running-job")
+        self.assertEqual(len(result.jobs), 2)
+        self.assertEqual(result.jobs[0].rows_inserted, 25)
+        self.assertEqual(
+            result.jobs[0].last_files_loaded,
+            ("reports/focus-2026-08.csv.gz",),
+        )
+        self.assertEqual(
+            opener.urls[0][0], "http://127.0.0.1:8080/api/v1/loader/jobs"
         )
 
     def test_loader_job_treats_missing_or_null_analytics_as_empty(self):

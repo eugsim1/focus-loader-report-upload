@@ -27,7 +27,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 if self.path == "/api/v1/health":
                     payload = {
                         "status": "ok",
-                        "version": "26.15.0-multi-port-bastion-tunnels",
+                        "version": "26.16.0-persistent-loader-history",
                     }
                 elif self.path == "/api/v1/tns/aliases":
                     payload = {
@@ -36,6 +36,8 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                         "sourcePath": "/opt/oracle/wallet/tnsnames.ora",
                         "readAtUtc": "2026-08-10T12:00:00Z",
                     }
+                elif self.path == "/api/v1/loader/jobs":
+                    payload = {"activeJobId": "", "jobs": []}
                 elif self.path == "/api/v1/loader/jobs/analytics-job":
                     payload = {
                         "jobId": "analytics-job",
@@ -145,7 +147,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.assertIn("Reset interface", [button.label for button in app.button])
                 self.assertTrue(
                     any(
-                        "Installed release: 26.15.0-multi-port-bastion-tunnels"
+                        "Installed release: 26.16.0-persistent-loader-history"
                         in caption.value
                         for caption in app.caption
                     )

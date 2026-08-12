@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.15.0-multi-port-bastion-tunnels`
+Version `26.16.0-persistent-loader-history`
 
 > **Independent project disclaimer**
 >
@@ -118,9 +118,11 @@ Current interactions include:
 - a separate Execute loader tab that runs the validated settings through the
   fixed backend executable and refreshes `TEMP_OCI_FOCUS` row totals every five
   seconds, including the increase from the pre-run baseline, live combined
-  stdout/stderr, process diagnostics, and a downloadable execution log. Before
-  each GUI-started run, only the selected backend user's `work_report_dir` is
-  emptied.
+  stdout/stderr, process diagnostics, and a downloadable execution log. Job
+  history survives browser and Bastion reconnections, and Streamlit
+  automatically resumes the active or most recent run. Before each GUI-started
+  run, only the selected backend user's ordinary `work_report_dir` content is
+  emptied; `.loader_job_history` is preserved.
 - a Cost analytics tab that refreshes monthly `EFFECTIVE_COST` totals grouped by
   `CHARGE_PERIOD_START` month and billing currency, plus the sorted unique
   `SERVICE_NAME` list, while the loader inserts committed rows. An empty table
@@ -150,7 +152,7 @@ services are reached through SSH/OCI Bastion or an authenticated TLS reverse
 proxy.
 
 Quick deployment after installing the
-`26.15.0-multi-port-bastion-tunnels` Go binary:
+`26.16.0-persistent-loader-history` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip

@@ -94,6 +94,7 @@ class LoaderJob:
     database_user: str
     database_alias: str
     table_name: str
+    created_at_utc: str
     started_at_utc: str
     finished_at_utc: str
     exit_code: int | None
@@ -118,13 +119,36 @@ class LoaderJob:
     path_environment: str
     work_report_directory: str
     work_report_reset_at_utc: str
+    last_files_loaded: tuple[str, ...]
     output: str
     output_truncated: bool
     error: str
 
     @property
     def terminal(self) -> bool:
-        return self.status in {"succeeded", "failed", "timed_out"}
+        return self.status in {"succeeded", "failed", "timed_out", "interrupted"}
+
+
+@dataclass(frozen=True)
+class LoaderJobHistoryEntry:
+    job_id: str
+    created_at_utc: str
+    started_at_utc: str
+    finished_at_utc: str
+    database_user: str
+    database_alias: str
+    status: str
+    rows_inserted: int
+    rows_inserted_known: bool
+    current_row_count: int
+    current_row_count_known: bool
+    last_files_loaded: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class LoaderJobHistory:
+    active_job_id: str
+    jobs: tuple[LoaderJobHistoryEntry, ...]
 
 
 class FocusAPIClient:
@@ -331,29 +355,59 @@ class FocusAPIClient:
         payload = self._get_json("/api/v1/loader/jobs/" + quote(job_id, safe=""))
         return self._loader_job(payload)
 
+    def loader_job_history(self) -> LoaderJobHistory:
+        payload = self._get_json("/api/v1/loader/jobs")
+        active_job_id = self._optional_string(payload, "activeJobId")
+        raw_jobs = payload.get("jobs")
+        if not isinstance(raw_jobs, list):
+            raise FocusAPIError("The Go API returned an invalid loader job history.")
+        jobs: list[LoaderJobHistoryEntry] = []
+        for raw_job in raw_jobs:
+            if not isinstance(raw_job, dict):
+                raise FocusAPIError("The Go API returned an invalid loader history entry.")
+            status = self._loader_status(raw_job)
+            jobs.append(
+                LoaderJobHistoryEntry(
+                    job_id=self._required_string(raw_job, "jobId"),
+                    created_at_utc=self._optional_string(raw_job, "createdAtUtc"),
+                    started_at_utc=self._optional_string(raw_job, "startedAtUtc"),
+                    finished_at_utc=self._optional_string(raw_job, "finishedAtUtc"),
+                    database_user=self._required_string(raw_job, "databaseUser"),
+                    database_alias=self._required_string(raw_job, "databaseAlias"),
+                    status=status,
+                    rows_inserted=self._required_int(raw_job, "rowsInserted"),
+                    rows_inserted_known=self._required_bool(
+                        raw_job, "rowsInsertedKnown"
+                    ),
+                    current_row_count=self._required_int(raw_job, "currentRowCount"),
+                    current_row_count_known=self._required_bool(
+                        raw_job, "currentRowCountKnown"
+                    ),
+                    last_files_loaded=self._string_tuple(
+                        raw_job, "lastFilesLoaded"
+                    ),
+                )
+            )
+        if active_job_id and active_job_id not in {job.job_id for job in jobs}:
+            raise FocusAPIError("The active loader job is missing from its history.")
+        return LoaderJobHistory(active_job_id=active_job_id, jobs=tuple(jobs))
+
     def _loader_job(self, payload: Mapping[str, Any]) -> LoaderJob:
-        status = self._required_string(payload, "status")
-        if status not in {"starting", "running", "succeeded", "failed", "timed_out"}:
-            raise FocusAPIError("The Go API returned an invalid loader job status.")
+        status = self._loader_status(payload)
         exit_code = payload.get("exitCode")
         if exit_code is not None and (
             not isinstance(exit_code, int) or isinstance(exit_code, bool)
         ):
             raise FocusAPIError("The Go API returned an invalid loader exit code.")
         monthly_costs = self._monthly_costs(payload, "monthlyCosts")
-        raw_services = payload.get("services", [])
-        if raw_services is None:
-            raw_services = []
-        if not isinstance(raw_services, list) or not all(
-            isinstance(service, str) and service for service in raw_services
-        ):
-            raise FocusAPIError("The Go API returned an invalid unique service list.")
+        raw_services = self._string_tuple(payload, "services")
         return LoaderJob(
             job_id=self._required_string(payload, "jobId"),
             status=status,
             database_user=self._required_string(payload, "databaseUser"),
             database_alias=self._required_string(payload, "databaseAlias"),
             table_name=self._required_string(payload, "tableName"),
+            created_at_utc=self._optional_string(payload, "createdAtUtc"),
             started_at_utc=self._string(payload, "startedAtUtc"),
             finished_at_utc=self._string(payload, "finishedAtUtc"),
             exit_code=exit_code,
@@ -370,7 +424,7 @@ class FocusAPIClient:
             row_count_updated_at_utc=self._string(payload, "rowCountUpdatedAtUtc"),
             row_count_error=self._string(payload, "rowCountError"),
             monthly_costs=monthly_costs,
-            services=tuple(raw_services),
+            services=raw_services,
             analytics_updated_at_utc=self._optional_string(
                 payload, "analyticsUpdatedAtUtc"
             ),
@@ -388,10 +442,36 @@ class FocusAPIClient:
             work_report_reset_at_utc=self._optional_string(
                 payload, "workReportResetAtUtc"
             ),
+            last_files_loaded=self._string_tuple(payload, "lastFilesLoaded"),
             output=self._string(payload, "output"),
             output_truncated=self._optional_bool(payload, "outputTruncated"),
             error=self._string(payload, "error"),
         )
+
+    def _loader_status(self, payload: Mapping[str, Any]) -> str:
+        status = self._required_string(payload, "status")
+        if status not in {
+            "starting",
+            "running",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "interrupted",
+        }:
+            raise FocusAPIError("The Go API returned an invalid loader job status.")
+        return status
+
+    def _string_tuple(
+        self, payload: Mapping[str, Any], field_name: str
+    ) -> tuple[str, ...]:
+        raw_values = payload.get(field_name, [])
+        if raw_values is None:
+            raw_values = []
+        if not isinstance(raw_values, list) or not all(
+            isinstance(value, str) and value for value in raw_values
+        ):
+            raise FocusAPIError(f"The Go API returned an invalid {field_name} list.")
+        return tuple(raw_values)
 
     def _monthly_costs(
         self, payload: Mapping[str, Any], field_name: str

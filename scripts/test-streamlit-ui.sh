@@ -41,10 +41,16 @@ command -v sqlplus >/dev/null
 echo "[5/7] Loader execution APIs"
 status=$(curl -sS -o "${work_dir}/loader-jobs.json" -w '%{http_code}' \
   "${FOCUSLOADER_API_URL}/api/v1/loader/jobs")
-[[ "${status}" == "405" ]]
+[[ "${status}" == "200" ]]
+"${PYTHON_BIN}" -c \
+  'import json,sys; p=json.load(open(sys.argv[1], encoding="utf-8")); assert isinstance(p["activeJobId"], str) and isinstance(p["jobs"], list)' \
+  "${work_dir}/loader-jobs.json"
 status=$(curl -sS -o "${work_dir}/oracle-loader-jobs.json" -w '%{http_code}' \
   "${ORACLE_API_URL}/api/v1/loader/jobs")
-[[ "${status}" == "405" ]]
+[[ "${status}" == "200" ]]
+"${PYTHON_BIN}" -c \
+  'import json,sys; p=json.load(open(sys.argv[1], encoding="utf-8")); assert isinstance(p["activeJobId"], str) and isinstance(p["jobs"], list)' \
+  "${work_dir}/oracle-loader-jobs.json"
 
 echo "[6/7] Streamlit health"
 health=$(curl -fsS "${UI_URL}/_stcore/health")

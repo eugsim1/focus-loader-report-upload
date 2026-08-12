@@ -1,5 +1,25 @@
 # Changelog
 
+## 26.16.0-persistent-loader-history
+
+- Persisted every Streamlit-started loader job as a password-free JSON snapshot
+  under the selected backend user's protected
+  `work_report_dir/.loader_job_history` directory. Normal per-run cleanup now
+  preserves only this validated history directory.
+- Added `GET /api/v1/loader/jobs` with the active job ID and newest-first
+  history containing UTC time, target schema and alias, last known state, row
+  counts, rows inserted, and the ten most recently checkpointed source files.
+- Made Streamlit automatically reconnect to the backend's active loader job
+  after a browser or OCI Bastion tunnel timeout, or restore the most recent
+  completed job when no run is active.
+- Added a persistent execution-history table to **Execute loader**, plus last
+  loaded files in live diagnostics and downloaded logs. A backend service
+  restart restores prior records and marks a previously active record
+  `interrupted` instead of silently losing it.
+- Documented that loader execution is owned by the systemd Go backend and does
+  not require `nohup`; closing Streamlit or the SSH tunnel does not terminate
+  the child process.
+
 ## 26.15.0-multi-port-bastion-tunnels
 
 - Expanded the shared Windows Bastion launcher to forward remote ports 22,

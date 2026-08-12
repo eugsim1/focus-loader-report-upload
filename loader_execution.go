@@ -20,7 +20,6 @@ const (
 	loaderJobPathPrefix        = "/api/v1/loader/jobs/"
 	loaderJobCollectionPath    = "/api/v1/loader/jobs"
 	loaderJobTimeout           = 24 * time.Hour
-	loaderJobRetention         = 2 * time.Hour
 	loaderRowCountInterval     = 5 * time.Second
 	loaderRowCountTimeout      = 20 * time.Second
 	loaderAnalyticsInterval    = 30 * time.Second
@@ -76,6 +75,7 @@ type loaderExecutionResponse struct {
 	DatabaseUser          string              `json:"databaseUser"`
 	DatabaseAlias         string              `json:"databaseAlias"`
 	TableName             string              `json:"tableName"`
+	CreatedAtUTC          string              `json:"createdAtUtc"`
 	StartedAtUTC          string              `json:"startedAtUtc"`
 	FinishedAtUTC         string              `json:"finishedAtUtc"`
 	ExitCode              *int                `json:"exitCode"`
@@ -100,6 +100,7 @@ type loaderExecutionResponse struct {
 	PathEnvironment       string              `json:"pathEnvironment"`
 	WorkReportDirectory   string              `json:"workReportDirectory"`
 	WorkReportResetAtUTC  string              `json:"workReportResetAtUtc"`
+	LastFilesLoaded       []string            `json:"lastFilesLoaded"`
 	Output                string              `json:"output"`
 	OutputTruncated       bool                `json:"outputTruncated"`
 	Error                 string              `json:"error"`
@@ -130,6 +131,7 @@ type loaderExecutionJob struct {
 	status                string
 	databaseUser          string
 	databaseAlias         string
+	createdAtUTC          time.Time
 	startedAtUTC          time.Time
 	finishedAtUTC         time.Time
 	exitCode              *int
@@ -154,6 +156,7 @@ type loaderExecutionJob struct {
 	pathEnvironment       string
 	workReportDirectory   string
 	workReportResetAtUTC  time.Time
+	lastFilesLoaded       []string
 	output                *boundedDeploymentOutput
 	finalOutput           string
 	outputTruncated       bool
@@ -170,11 +173,12 @@ type loaderExecutionService struct {
 	pollInterval      time.Duration
 	analyticsInterval time.Duration
 	timeout           time.Duration
-	retention         time.Duration
+	historyDirectory  string
 
-	mu       sync.Mutex
-	jobs     map[string]*loaderExecutionJob
-	activeID string
+	mu        sync.Mutex
+	historyMu sync.Mutex
+	jobs      map[string]*loaderExecutionJob
+	activeID  string
 }
 
 type loaderExecutionAPIError struct {
@@ -185,7 +189,7 @@ type loaderExecutionAPIError struct {
 func (err loaderExecutionAPIError) Error() string { return err.message }
 
 func newLoaderExecutionService(getenv func(string) string) *loaderExecutionService {
-	return &loaderExecutionService{
+	service := &loaderExecutionService{
 		getenv:            getenv,
 		runner:            runLoaderExecutionProcess,
 		rowCounter:        countOracleTempFocusRows,
@@ -194,15 +198,21 @@ func newLoaderExecutionService(getenv func(string) string) *loaderExecutionServi
 		pollInterval:      loaderRowCountInterval,
 		analyticsInterval: loaderAnalyticsInterval,
 		timeout:           loaderJobTimeout,
-		retention:         loaderJobRetention,
+		historyDirectory:  loaderExecutionHistoryDirectory(getenv),
 		jobs:              make(map[string]*loaderExecutionJob),
 	}
+	service.loadPersistedJobs()
+	return service
 }
 
 func (service *loaderExecutionService) handleCollection(w http.ResponseWriter, r *http.Request) {
 	setTNSGUIJSONHeaders(w)
+	if r.Method == http.MethodGet {
+		_ = json.NewEncoder(w).Encode(service.history())
+		return
+	}
 	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
 		writeLoaderExecutionError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
@@ -312,6 +322,7 @@ func (service *loaderExecutionService) start(request loaderExecutionRequest) (lo
 		status:           "starting",
 		databaseUser:     request.DatabaseUser,
 		databaseAlias:    request.DatabaseAlias,
+		createdAtUTC:     time.Now().UTC(),
 		executable:       executable,
 		workingDirectory: workingDirectory,
 		commandLine:      buildLoaderCommandLine(executable, arguments),
@@ -366,6 +377,7 @@ func (service *loaderExecutionService) start(request loaderExecutionRequest) (lo
 	service.activeID = jobID
 	response, _ := service.snapshotLocked(jobID)
 	service.mu.Unlock()
+	service.persistJob(jobID)
 
 	go service.run(jobID, input)
 	return response, nil
@@ -385,6 +397,7 @@ func (service *loaderExecutionService) run(jobID string, input loaderExecutionIn
 	job.startedAtUTC = time.Now().UTC()
 	writeLoaderExecutionHeader(job.output, jobID, input, job.workReportDirectory, job.workReportResetAtUTC)
 	service.mu.Unlock()
+	service.persistJob(jobID)
 
 	service.refreshRowCount(ctx, jobID, input, true)
 	monitorContext, stopMonitor := context.WithCancel(ctx)
@@ -453,14 +466,7 @@ func (service *loaderExecutionService) run(jobID string, input loaderExecutionIn
 		service.activeID = ""
 	}
 	service.mu.Unlock()
-
-	time.AfterFunc(service.retention, func() {
-		service.mu.Lock()
-		defer service.mu.Unlock()
-		if retained, exists := service.jobs[jobID]; exists && retained.status != "running" && retained.status != "starting" {
-			delete(service.jobs, jobID)
-		}
-	})
+	service.persistJob(jobID)
 }
 
 func (service *loaderExecutionService) refreshAnalytics(
@@ -488,6 +494,7 @@ func (service *loaderExecutionService) refreshAnalytics(
 		job.analyticsUpdatedAtUTC = now
 		job.analyticsError = ""
 		service.mu.Unlock()
+		service.persistJob(jobID)
 		return
 	}
 	service.mu.Unlock()
@@ -503,19 +510,23 @@ func (service *loaderExecutionService) refreshAnalytics(
 	now = time.Now().UTC()
 
 	service.mu.Lock()
-	defer service.mu.Unlock()
 	job, ok = service.jobs[jobID]
 	if !ok {
+		service.mu.Unlock()
 		return
 	}
 	if err != nil {
 		job.analyticsError = redactDatabasePassword(err.Error(), input.MonitorPassword)
+		service.mu.Unlock()
+		service.persistJob(jobID)
 		return
 	}
 	job.monthlyCosts = append([]loaderMonthlyCost(nil), snapshot.MonthlyCosts...)
 	job.services = append([]string(nil), snapshot.Services...)
 	job.analyticsUpdatedAtUTC = now
 	job.analyticsError = ""
+	service.mu.Unlock()
+	service.persistJob(jobID)
 }
 
 func (service *loaderExecutionService) refreshRowCount(
@@ -530,13 +541,15 @@ func (service *loaderExecutionService) refreshRowCount(
 	now := time.Now().UTC()
 
 	service.mu.Lock()
-	defer service.mu.Unlock()
 	job, ok := service.jobs[jobID]
 	if !ok {
+		service.mu.Unlock()
 		return
 	}
 	if err != nil {
 		job.rowCountError = redactDatabasePassword(err.Error(), input.MonitorPassword)
+		service.mu.Unlock()
+		service.persistJob(jobID)
 		return
 	}
 	job.rowCountError = ""
@@ -551,6 +564,9 @@ func (service *loaderExecutionService) refreshRowCount(
 		job.rowsInserted = count - job.initialRowCount
 		job.rowsInsertedKnown = true
 	}
+	job.lastFilesLoaded = readLastLoadedFiles(job.workReportDirectory)
+	service.mu.Unlock()
+	service.persistJob(jobID)
 }
 
 func (service *loaderExecutionService) snapshot(jobID string) (loaderExecutionResponse, bool) {
@@ -572,6 +588,10 @@ func (service *loaderExecutionService) snapshotLocked(jobID string) (loaderExecu
 	if services == nil {
 		services = []string{}
 	}
+	lastFilesLoaded := append([]string(nil), job.lastFilesLoaded...)
+	if lastFilesLoaded == nil {
+		lastFilesLoaded = []string{}
+	}
 	output := job.finalOutput
 	outputTruncated := job.outputTruncated
 	if job.output != nil {
@@ -584,6 +604,7 @@ func (service *loaderExecutionService) snapshotLocked(jobID string) (loaderExecu
 		DatabaseUser:          job.databaseUser,
 		DatabaseAlias:         job.databaseAlias,
 		TableName:             loaderTargetTableName,
+		CreatedAtUTC:          formatOptionalLoaderTime(job.createdAtUTC),
 		StartedAtUTC:          formatOptionalLoaderTime(job.startedAtUTC),
 		FinishedAtUTC:         formatOptionalLoaderTime(job.finishedAtUTC),
 		ExitCode:              job.exitCode,
@@ -608,6 +629,7 @@ func (service *loaderExecutionService) snapshotLocked(jobID string) (loaderExecu
 		PathEnvironment:       job.pathEnvironment,
 		WorkReportDirectory:   job.workReportDirectory,
 		WorkReportResetAtUTC:  formatOptionalLoaderTime(job.workReportResetAtUTC),
+		LastFilesLoaded:       lastFilesLoaded,
 		Output:                output,
 		OutputTruncated:       outputTruncated,
 		Error:                 job.errorMessage,
@@ -644,6 +666,13 @@ func resetLoaderWorkReportDirectory(workingDirectory string) (string, error) {
 		return "", fmt.Errorf("read %s: %w", reportDirectory, err)
 	}
 	for _, entry := range entries {
+		if entry.Name() == loaderJobHistoryDirectoryName {
+			info, err := entry.Info()
+			if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				return "", fmt.Errorf("refusing unsafe loader history path %s", filepath.Join(reportDirectory, entry.Name()))
+			}
+			continue
+		}
 		target := filepath.Join(reportDirectory, entry.Name())
 		if err := os.RemoveAll(target); err != nil {
 			return "", fmt.Errorf("remove %s: %w", target, err)

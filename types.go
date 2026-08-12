@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.15.0-multi-port-bastion-tunnels"
+	version       = "26.16.0-persistent-loader-history"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )
