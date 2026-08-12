@@ -43,7 +43,11 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
 - POSIX-safe command quoting and shell-script download.
 - A separate **Execute loader** tab that starts one validated job through the
   fixed backend executable and refreshes `TEMP_OCI_FOCUS` total/delta metrics
-  every five seconds.
+  every five seconds. It empties only that selected backend user's fixed
+  `work_report_dir`, streams combined stdout/stderr plus process diagnostics,
+  and offers the captured execution log as a download.
+- Installed backend release information and a GitHub release-history link on
+  both the main page and execution-identity sidebar.
 - A **Cost analytics** tab that refreshes monthly `EFFECTIVE_COST` totals and
   the unique `SERVICE_NAME` list while committed loader rows become visible.
   Zero rows produce empty analytics and never prevent the loader from starting.
@@ -158,7 +162,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.13.1-force-remote-sync"
+  "version": "26.14.0-streamlit-run-diagnostics"
 }
 ```
 
@@ -298,7 +302,7 @@ GET /api/v1/loader/jobs/<jobId>
 ```
 
 The response reports `starting`, `running`, `succeeded`, `failed`, or
-`timed_out`; start/finish times; exit code; up to 2 MiB of combined, redacted
+`timed_out`; start/finish times; exit code; up to 8 MiB of combined, redacted
 stdout/stderr; `outputTruncated`; and
 `initialRowCount`, `currentRowCount`, and `rowsInserted` values with availability
 flags. `rowsInserted` is the current `TEMP_OCI_FOCUS` count minus the count read
@@ -313,7 +317,8 @@ arrays and skips both analytics queries until rows become visible. Missing or
 `null` analytics fields from a transitional backend are also interpreted as an
 empty not-yet-populated snapshot. It also returns `executable`,
 `workingDirectory`, `commandLine`, `manualCommand`, `tnsAdmin`, `homeDirectory`,
-and `pathEnvironment`. The direct-password manual command contains a hidden
+`pathEnvironment`, `workReportDirectory`, and `workReportResetAtUtc`. The
+direct-password manual command contains a hidden
 prompt and `-dp-stdin`, never the credential. Only one loader job can run at a time, jobs
 time out after 24 hours, and completed status and its final analytics snapshot
 are retained in memory for two hours.
@@ -358,7 +363,7 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 ## 1. Build and install the updated Go backend
 
 The execution, cost, and schema-statistics tabs require the
-`26.13.1-force-remote-sync` Go API and UI to be installed together.
+`26.14.0-streamlit-run-diagnostics` Go API and UI to be installed together.
 
 ```bash
 cd /home/oracle/focus-loader-report-upload
@@ -374,7 +379,7 @@ dist/focus-loader-report-upload-linux-amd64 -version
 Expected version:
 
 ```text
-focus-loader-report-upload 26.13.1-force-remote-sync
+focus-loader-report-upload 26.14.0-streamlit-run-diagnostics
 ```
 
 ## 2. Verify TNS permissions
@@ -699,18 +704,24 @@ The downloaded script is never run automatically.
    authentication, confirm the displayed mode; the backend resolves the secret.
 4. Select **Execute the validated loader job**, then select **Start loader
    execution**.
-5. Keep the page open. The status fragment refreshes every five seconds and
+5. The selected backend empties exactly its fixed `work_report_dir` before the
+   process starts: `/opt/focus-loader/work_report_dir` for `focusloader`, or
+   `/home/oracle/focus-loader-report-upload/work_report_dir` for `oracle`.
+   This deletes prior local checkpoints, reports, SQL*Loader logs, and retained
+   work files in that directory. It never deletes the application directory.
+6. Keep the page open. The status fragment refreshes every five seconds and
    shows job state, `TEMP_OCI_FOCUS` total rows, and rows inserted since the
    baseline captured immediately before execution.
-6. Expand **Execution command and diagnostics** to see the exact command used
+7. Expand **Execution command and diagnostics** to see the exact command used
    by the backend, executable, working directory, `HOME`, `TNS_ADMIN`, `PATH`,
    timestamps, exit code, and output-truncation status.
-7. Copy the generated one-line manual command to reproduce the run as the
+8. Copy the generated one-line manual command to reproduce the run as the
    selected Linux user. Password mode prompts invisibly and uses `-dp-stdin`;
    the password never appears in the displayed command or process arguments.
-8. Review **Captured loader stdout and stderr** for the complete bounded
-   console diagnostics. The capture limit is 2 MiB and the UI reports when it
-   was exceeded.
+9. Review **Full loader execution log** while the process runs. It includes the
+   backend error and live combined stdout/stderr, plus a diagnostic header and
+   process trailer. The capture limit is 8 MiB and the UI reports when it was
+   exceeded. Select **Download full loader execution log** to save it.
 
 The Go service runs only `FOCUS_LOADER_EXECUTABLE` with structured arguments and
 `FOCUS_LOADER_WORK_DIR`; it ignores the executable text used by the preview.
@@ -1035,7 +1046,7 @@ sudo grep '^FOCUS_API_URL' /etc/focus-loader/streamlit.env
 ```
 
 An older binary does not provide schema statistics; install the
-`26.13.1-force-remote-sync` binary before using the current interface.
+`26.14.0-streamlit-run-diagnostics` binary before using the current interface.
 
 ### The alias endpoint returns an error
 
@@ -1090,7 +1101,7 @@ sudo journalctl -u focus-loader-tns-gui.service -n 200 --no-pager
 ```
 
 An `ORA-01940` from an older installation means the target schema still has an
-active session. Version `26.13.1-force-remote-sync` locks the user,
+active session. Version `26.14.0-streamlit-run-diagnostics` locks the user,
 disconnects those sessions, and retries the drop. If it persists after upgrade,
 download the execution log and verify that the administrator can query
 `GV$SESSION` and run `ALTER SYSTEM DISCONNECT SESSION`.
@@ -1167,6 +1178,12 @@ directory to roll back application code.
 - The installer makes the script and its directory root-owned. The hardened Go
   service receives write access only to the installed working and parent
   `focus.conf` files plus `work_report_dir` for loader checkpoints/reports.
+- Every GUI-started loader execution deliberately empties the selected backend
+  user's fixed `work_report_dir`. The cleanup validates the exact child path,
+  refuses symbolic links, preserves everything outside that directory, and
+  occurs only after request validation and before the process starts. Because
+  local checkpoint files are removed, rely on the database load-status tables
+  or external backups when replay prevention must survive GUI runs.
 - `dropExisting` defaults to false. The single destructive-replacement checkbox
   must be selected to drop and recreate a schema. Use database auditing/change
   controls for production runs.

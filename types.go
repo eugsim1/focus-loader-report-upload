@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.13.1-force-remote-sync"
+	version       = "26.14.0-streamlit-run-diagnostics"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

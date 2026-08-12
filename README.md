@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.13.1-force-remote-sync`
+Version `26.14.0-streamlit-run-diagnostics`
 
 > **Independent project disclaimer**
 >
@@ -117,7 +117,10 @@ Current interactions include:
 - POSIX-safe command preview and reviewed shell-script download;
 - a separate Execute loader tab that runs the validated settings through the
   fixed backend executable and refreshes `TEMP_OCI_FOCUS` row totals every five
-  seconds, including the increase from the pre-run baseline.
+  seconds, including the increase from the pre-run baseline, live combined
+  stdout/stderr, process diagnostics, and a downloadable execution log. Before
+  each GUI-started run, only the selected backend user's `work_report_dir` is
+  emptied.
 - a Cost analytics tab that refreshes monthly `EFFECTIVE_COST` totals grouped by
   `CHARGE_PERIOD_START` month and billing currency, plus the sorted unique
   `SERVICE_NAME` list, while the loader inserts committed rows. An empty table
@@ -147,7 +150,7 @@ services are reached through SSH/OCI Bastion or an authenticated TLS reverse
 proxy.
 
 Quick deployment after installing the
-`26.13.1-force-remote-sync` Go binary:
+`26.14.0-streamlit-run-diagnostics` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip

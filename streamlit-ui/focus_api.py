@@ -116,6 +116,8 @@ class LoaderJob:
     tns_admin: str
     home_directory: str
     path_environment: str
+    work_report_directory: str
+    work_report_reset_at_utc: str
     output: str
     output_truncated: bool
     error: str
@@ -380,6 +382,12 @@ class FocusAPIClient:
             tns_admin=self._optional_string(payload, "tnsAdmin"),
             home_directory=self._optional_string(payload, "homeDirectory"),
             path_environment=self._optional_string(payload, "pathEnvironment"),
+            work_report_directory=self._optional_string(
+                payload, "workReportDirectory"
+            ),
+            work_report_reset_at_utc=self._optional_string(
+                payload, "workReportResetAtUtc"
+            ),
             output=self._string(payload, "output"),
             output_truncated=self._optional_bool(payload, "outputTruncated"),
             error=self._string(payload, "error"),

@@ -56,6 +56,9 @@ EXECUTION_BACKENDS = {
 }
 ORACLE_IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]{0,127}$")
 PROTECTED_DEPLOYMENT_SCHEMAS = {"ADMIN", "AUDSYS", "PDBADMIN", "SYS", "SYSTEM"}
+GITHUB_RELEASES_URL = (
+    "https://github.com/eugsim1/focus-loader-report-upload/releases"
+)
 
 st.set_page_config(
     page_title="OCI FOCUS Loader",
@@ -138,6 +141,35 @@ def schema_deployment_log(result: SchemaDeployment) -> str:
     ]
     if result.error:
         lines.extend(("", "Backend error:", result.error))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def loader_execution_log(job: LoaderJob) -> str:
+    lines = [
+        "FOCUS Loader Streamlit execution log",
+        f"Job ID: {job.job_id}",
+        f"Status: {job.status}",
+        f"Exit code: {job.exit_code if job.exit_code is not None else 'running'}",
+        f"Started UTC: {job.started_at_utc or 'not started'}",
+        f"Finished UTC: {job.finished_at_utc or 'not finished'}",
+        f"Executable: {job.executable}",
+        f"Working directory: {job.working_directory}",
+        f"Reset work_report_dir: {job.work_report_directory}",
+        f"Reset UTC: {job.work_report_reset_at_utc}",
+        f"TNS_ADMIN: {job.tns_admin}",
+        f"HOME: {job.home_directory}",
+        f"Database target: {job.database_user}@{job.database_alias}",
+        f"Output truncated: {str(job.output_truncated).lower()}",
+        "",
+        "Exact backend command (password not included):",
+        job.command_line or "(unavailable)",
+        "",
+        "Backend result:",
+        job.error or "(no backend error)",
+        "",
+        "Combined stdout and stderr:",
+        job.output or "(no process output captured yet)",
+    ]
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -815,6 +847,8 @@ def render_loader_job(job: LoaderJob) -> None:
                 "TNS_ADMIN": job.tns_admin,
                 "HOME": job.home_directory,
                 "PATH": job.path_environment,
+                "workReportDirectory": job.work_report_directory,
+                "workReportResetAtUtc": job.work_report_reset_at_utc,
                 "databaseUser": job.database_user,
                 "databaseAlias": job.database_alias,
                 "outputTruncated": job.output_truncated,
@@ -837,16 +871,32 @@ def render_loader_job(job: LoaderJob) -> None:
             )
             st.code(job.manual_command, language="bash", wrap_lines=True)
 
-    if job.output:
-        st.markdown("#### Captured loader stdout and stderr")
-        if job.output_truncated:
-            st.warning(
-                "The loader produced more than 2 MiB of console output. The API response "
-                "contains the bounded capture and marks it as truncated."
-            )
-        st.code(job.output, language="text", wrap_lines=True)
-    elif job.status in {"failed", "timed_out"}:
-        st.warning("The loader process failed without writing to stdout or stderr.")
+    st.markdown("#### Full loader execution log")
+    st.caption(
+        "The backend streams combined stdout and stderr into this panel while the "
+        "process runs. The log also contains process paths, the redacted command, "
+        "work_report_dir reset details, exit code, and the complete backend error."
+    )
+    if job.output_truncated:
+        st.warning(
+            "The loader produced more than 8 MiB of console output. The API response "
+            "contains the bounded capture and marks it as truncated."
+        )
+    complete_log = loader_execution_log(job)
+    st.text_area(
+        "Loader stdout, stderr, and process diagnostics",
+        value=complete_log,
+        height=600,
+        disabled=True,
+        key=f"loader-output-{job.job_id}-{job.status}-{len(complete_log)}",
+    )
+    st.download_button(
+        "Download full loader execution log",
+        data=complete_log,
+        file_name=f"focus-loader-{job.job_id[:12]}-{job.status}.log",
+        mime="text/plain",
+        key=f"loader-log-download-{job.job_id}-{job.status}-{len(complete_log)}",
+    )
 
 
 def render_loader_execution(api_url: str) -> None:
@@ -1118,6 +1168,19 @@ def main() -> None:
             "-tns-gui -tns-gui-listen 127.0.0.1:8080"
         )
         st.stop()
+
+    st.caption(
+        f"Installed release: {health.version} · "
+        f"[GitHub releases]({GITHUB_RELEASES_URL})"
+    )
+    with st.sidebar:
+        st.divider()
+        st.markdown(f"**Installed release:** `{health.version}`")
+        st.link_button(
+            "Open GitHub releases",
+            GITHUB_RELEASES_URL,
+            use_container_width=True,
+        )
 
     show_deployment_tab = deployment_authorization_is_active() or isinstance(
         st.session_state.get("schema_deployment_result"), SchemaDeployment

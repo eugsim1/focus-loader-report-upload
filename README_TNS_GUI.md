@@ -111,7 +111,11 @@ run only the server-configured
 browser-supplied command, script path, TNS path, alias, config path, or SQL text.
 The versioned `POST /api/v1/loader/jobs` endpoint accepts only validated
 structured loader fields, starts the fixed `FOCUS_LOADER_EXECUTABLE`, and exposes
-status at `GET /api/v1/loader/jobs/<jobId>`. Its row monitor runs only a fixed
+status at `GET /api/v1/loader/jobs/<jobId>`. Immediately before each accepted
+job, it empties only `FOCUS_LOADER_WORK_DIR/work_report_dir` for that selected
+backend user. Job snapshots stream up to 8 MiB of password-redacted combined
+stdout/stderr plus process-start/exit diagnostics and reset metadata. Its row
+monitor runs only a fixed
 `COUNT(*)` query plus fixed monthly `EFFECTIVE_COST` and distinct
 `SERVICE_NAME` queries against `TEMP_OCI_FOCUS` as the configured database
 user. Analytics refresh every 30 seconds while a job runs and are returned with

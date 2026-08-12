@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -168,6 +169,10 @@ func TestLoaderExecutionServiceReportsRowCountIncreaseAndRedactsOutput(t *testin
 	if started.MonthlyCosts == nil || started.Services == nil {
 		t.Fatalf("starting response must use empty analytics arrays: %#v", started)
 	}
+	if started.WorkReportDirectory != filepath.Join(workDirectory, workReportDir) ||
+		started.WorkReportResetAtUTC == "" {
+		t.Fatalf("work_report_dir reset metadata is missing: %#v", started)
+	}
 	if started.Executable != executable || started.WorkingDirectory != workDirectory ||
 		!strings.Contains(started.CommandLine, "'-dp-stdin'") ||
 		!strings.Contains(started.ManualCommand, "Database password:") ||
@@ -211,6 +216,72 @@ func TestLoaderExecutionServiceReportsRowCountIncreaseAndRedactsOutput(t *testin
 	defer countMu.Unlock()
 	if counterUser != "FOCUS_APP" || counterPassword != "runtime-test-secret" || counterAlias != "FOCUS_HIGH" {
 		t.Fatalf("unexpected row counter credentials: %s/%s@%s", counterUser, counterPassword, counterAlias)
+	}
+}
+
+func TestResetLoaderWorkReportDirectoryClearsOnlySelectedUserReportDirectory(t *testing.T) {
+	workingDirectory := t.TempDir()
+	reportDirectory := filepath.Join(workingDirectory, workReportDir)
+	if err := os.MkdirAll(filepath.Join(reportDirectory, "nested"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(reportDirectory, "nested", "old.log"), []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(workingDirectory, "focus.conf")
+	if err := os.WriteFile(outside, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	resetPath, err := resetLoaderWorkReportDirectory(workingDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resetPath != reportDirectory {
+		t.Fatalf("reset path = %q, want %q", resetPath, reportDirectory)
+	}
+	entries, err := os.ReadDir(reportDirectory)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("work report directory was not emptied: entries=%v error=%v", entries, err)
+	}
+	if content, err := os.ReadFile(outside); err != nil || string(content) != "preserve" {
+		t.Fatalf("file outside work_report_dir changed: content=%q error=%v", content, err)
+	}
+}
+
+func TestLoaderSnapshotReturnsLiveRedactedOutput(t *testing.T) {
+	output := &boundedDeploymentOutput{limit: maxLoaderJobOutputBytes}
+	_, _ = io.WriteString(output, "startup runtime-secret diagnostic")
+	service := &loaderExecutionService{jobs: map[string]*loaderExecutionJob{
+		"live-job": {
+			id:              "live-job",
+			status:          "running",
+			databaseUser:    "FOCUS_APP",
+			databaseAlias:   "FOCUS_HIGH",
+			output:          output,
+			redactionValues: []string{"runtime-secret"},
+		},
+	}}
+	response, ok := service.snapshot("live-job")
+	if !ok || !strings.Contains(response.Output, "startup [REDACTED] diagnostic") ||
+		strings.Contains(response.Output, "runtime-secret") {
+		t.Fatalf("live output was missing or unsafe: %#v", response)
+	}
+}
+
+func TestRunLoaderExecutionProcessCapturesStartFailure(t *testing.T) {
+	output := &boundedDeploymentOutput{limit: maxLoaderJobOutputBytes}
+	exitCode, err := runLoaderExecutionProcess(context.Background(), loaderExecutionInput{
+		Executable:       filepath.Join(t.TempDir(), "missing-loader"),
+		WorkingDirectory: t.TempDir(),
+	}, output)
+	if err == nil || exitCode != -1 {
+		t.Fatalf("expected process start failure, got exit=%d error=%v", exitCode, err)
+	}
+	for _, expected := range []string{"Process exit code: -1", "Process error:"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("process diagnostics missing %q: %s", expected, output.String())
+		}
 	}
 }
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## 26.14.0-streamlit-run-diagnostics
+
+- Added the installed backend release version and a GitHub releases link to the
+  main Streamlit page and execution-identity sidebar.
+- Reset only the selected backend user's fixed `work_report_dir` immediately
+  before every GUI-started loader job. The protected application working
+  directory is never removed; symlinks and unsafe paths are rejected.
+- Streamed password-redacted combined stdout/stderr into the **Execute loader**
+  tab while a job is running instead of returning output only after completion.
+- Added a diagnostic header and process trailer containing the job, executable,
+  working directory, redacted command, selected database target,
+  `work_report_dir` reset, timestamps, exit code, and process-start/exit error.
+- Increased bounded loader capture to 8 MiB and added a downloadable execution
+  log containing the complete captured console output and backend failure
+  details.
+- Added regression coverage for scoped work-directory cleanup, preservation of
+  files outside it, live output redaction, process-start diagnostics, and new
+  API metadata.
+
 ## 26.13.1-force-remote-sync
 
 - Added `scripts/force-sync-remote.sh` to recover from blocked pulls by fetching

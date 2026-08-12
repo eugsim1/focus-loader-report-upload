@@ -27,7 +27,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 if self.path == "/api/v1/health":
                     payload = {
                         "status": "ok",
-                        "version": "26.13.1-force-remote-sync",
+                        "version": "26.14.0-streamlit-run-diagnostics",
                     }
                 elif self.path == "/api/v1/tns/aliases":
                     payload = {
@@ -143,6 +143,13 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.assertIn("Schema stats", [tab.label for tab in app.tabs])
                 self.assertIn("Cost analytics", [tab.label for tab in app.tabs])
                 self.assertIn("Reset interface", [button.label for button in app.button])
+                self.assertTrue(
+                    any(
+                        "Installed release: 26.14.0-streamlit-run-diagnostics"
+                        in caption.value
+                        for caption in app.caption
+                    )
+                )
                 requested_defaults = {
                     "Pre-load report (-preload-report)": True,
                     "Continue after report (-continue-after-report)": True,

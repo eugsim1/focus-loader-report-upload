@@ -26,7 +26,7 @@ const (
 	loaderAnalyticsInterval    = 30 * time.Second
 	loaderAnalyticsTimeout     = 25 * time.Second
 	maxLoaderJobRequestBytes   = 64 * 1024
-	maxLoaderJobOutputBytes    = 2 * 1024 * 1024
+	maxLoaderJobOutputBytes    = 8 * 1024 * 1024
 	maxLoaderJobFieldBytes     = 4096
 	loaderTargetTableName      = "TEMP_OCI_FOCUS"
 	loaderOCIConfigProfile     = "config_profile"
@@ -98,6 +98,8 @@ type loaderExecutionResponse struct {
 	TNSAdmin              string              `json:"tnsAdmin"`
 	HomeDirectory         string              `json:"homeDirectory"`
 	PathEnvironment       string              `json:"pathEnvironment"`
+	WorkReportDirectory   string              `json:"workReportDirectory"`
+	WorkReportResetAtUTC  string              `json:"workReportResetAtUtc"`
 	Output                string              `json:"output"`
 	OutputTruncated       bool                `json:"outputTruncated"`
 	Error                 string              `json:"error"`
@@ -150,9 +152,12 @@ type loaderExecutionJob struct {
 	tnsAdmin              string
 	homeDirectory         string
 	pathEnvironment       string
+	workReportDirectory   string
+	workReportResetAtUTC  time.Time
 	output                *boundedDeploymentOutput
 	finalOutput           string
 	outputTruncated       bool
+	redactionValues       []string
 	errorMessage          string
 }
 
@@ -298,7 +303,6 @@ func (service *loaderExecutionService) start(request loaderExecutionRequest) (lo
 	if !validDatabasePassword(monitorPassword) {
 		return loaderExecutionResponse{}, loaderExecutionAPIError{status: http.StatusBadRequest, message: "database password is invalid"}
 	}
-
 	jobID, err := newSchemaDeploymentToken()
 	if err != nil {
 		return loaderExecutionResponse{}, loaderExecutionAPIError{status: http.StatusInternalServerError, message: "could not create loader job id"}
@@ -323,6 +327,7 @@ func (service *loaderExecutionService) start(request loaderExecutionRequest) (lo
 		tnsAdmin:        service.getenv("TNS_ADMIN"),
 		homeDirectory:   service.getenv("HOME"),
 		pathEnvironment: service.getenv("PATH"),
+		redactionValues: []string{monitorPassword, request.VaultSecretOCID},
 		monthlyCosts:    []loaderMonthlyCost{},
 		services:        []string{},
 		output: &boundedDeploymentOutput{
@@ -347,6 +352,16 @@ func (service *loaderExecutionService) start(request loaderExecutionRequest) (lo
 			status: http.StatusConflict, message: "another loader execution is already running",
 		}
 	}
+	workReportDirectory, err := resetLoaderWorkReportDirectory(workingDirectory)
+	if err != nil {
+		service.mu.Unlock()
+		return loaderExecutionResponse{}, loaderExecutionAPIError{
+			status:  http.StatusInternalServerError,
+			message: fmt.Sprintf("could not reset the selected user's work_report_dir: %v", err),
+		}
+	}
+	job.workReportDirectory = workReportDirectory
+	job.workReportResetAtUTC = time.Now().UTC()
 	service.jobs[jobID] = job
 	service.activeID = jobID
 	response, _ := service.snapshotLocked(jobID)
@@ -368,6 +383,7 @@ func (service *loaderExecutionService) run(jobID string, input loaderExecutionIn
 	}
 	job.status = "running"
 	job.startedAtUTC = time.Now().UTC()
+	writeLoaderExecutionHeader(job.output, jobID, input, job.workReportDirectory, job.workReportResetAtUTC)
 	service.mu.Unlock()
 
 	service.refreshRowCount(ctx, jobID, input, true)
@@ -430,6 +446,7 @@ func (service *loaderExecutionService) run(jobID string, input loaderExecutionIn
 		job.finalOutput = finalOutput
 		job.outputTruncated = outputTruncated
 		job.output = nil
+		job.redactionValues = nil
 		job.errorMessage = errorMessage
 	}
 	if service.activeID == jobID {
@@ -555,6 +572,12 @@ func (service *loaderExecutionService) snapshotLocked(jobID string) (loaderExecu
 	if services == nil {
 		services = []string{}
 	}
+	output := job.finalOutput
+	outputTruncated := job.outputTruncated
+	if job.output != nil {
+		output = redactDatabasePasswords(job.output.String(), job.redactionValues...)
+		outputTruncated = job.output.Truncated()
+	}
 	return loaderExecutionResponse{
 		JobID:                 job.id,
 		Status:                job.status,
@@ -583,10 +606,71 @@ func (service *loaderExecutionService) snapshotLocked(jobID string) (loaderExecu
 		TNSAdmin:              job.tnsAdmin,
 		HomeDirectory:         job.homeDirectory,
 		PathEnvironment:       job.pathEnvironment,
-		Output:                job.finalOutput,
-		OutputTruncated:       job.outputTruncated,
+		WorkReportDirectory:   job.workReportDirectory,
+		WorkReportResetAtUTC:  formatOptionalLoaderTime(job.workReportResetAtUTC),
+		Output:                output,
+		OutputTruncated:       outputTruncated,
 		Error:                 job.errorMessage,
 	}, true
+}
+
+func resetLoaderWorkReportDirectory(workingDirectory string) (string, error) {
+	cleanWorkingDirectory := filepath.Clean(workingDirectory)
+	if !filepath.IsAbs(cleanWorkingDirectory) {
+		return "", fmt.Errorf("working directory must be absolute")
+	}
+	reportDirectory := filepath.Join(cleanWorkingDirectory, workReportDir)
+	relative, err := filepath.Rel(cleanWorkingDirectory, reportDirectory)
+	if err != nil || relative != workReportDir {
+		return "", fmt.Errorf("refusing unsafe work report path %s", reportDirectory)
+	}
+
+	info, err := os.Lstat(reportDirectory)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.Mkdir(reportDirectory, 0o750); err != nil {
+			return "", fmt.Errorf("create %s: %w", reportDirectory, err)
+		}
+		return reportDirectory, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("inspect %s: %w", reportDirectory, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf("refusing to clear non-directory or symbolic link %s", reportDirectory)
+	}
+
+	entries, err := os.ReadDir(reportDirectory)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", reportDirectory, err)
+	}
+	for _, entry := range entries {
+		target := filepath.Join(reportDirectory, entry.Name())
+		if err := os.RemoveAll(target); err != nil {
+			return "", fmt.Errorf("remove %s: %w", target, err)
+		}
+	}
+	if err := os.Chmod(reportDirectory, 0o750); err != nil {
+		return "", fmt.Errorf("set permissions on %s: %w", reportDirectory, err)
+	}
+	return reportDirectory, nil
+}
+
+func writeLoaderExecutionHeader(
+	output io.Writer,
+	jobID string,
+	input loaderExecutionInput,
+	workReportDirectory string,
+	resetAt time.Time,
+) {
+	fmt.Fprintln(output, "FOCUS Loader Streamlit execution log")
+	fmt.Fprintf(output, "Job ID: %s\n", jobID)
+	fmt.Fprintf(output, "Started UTC: %s\n", time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(output, "Executable: %s\n", input.Executable)
+	fmt.Fprintf(output, "Working directory: %s\n", input.WorkingDirectory)
+	fmt.Fprintf(output, "Reset work_report_dir: %s at %s\n", workReportDirectory, resetAt.Format(time.RFC3339))
+	fmt.Fprintf(output, "Database target: %s@%s\n", input.DatabaseUser, input.DatabaseAlias)
+	fmt.Fprintf(output, "Command: %s\n", buildLoaderCommandLine(input.Executable, input.Arguments))
+	fmt.Fprintln(output, "--- combined loader stdout and stderr ---")
 }
 
 func formatOptionalLoaderTime(value time.Time) string {
@@ -830,7 +914,7 @@ func buildLoaderFailureMessage(
 		return detail + "\nNo stdout or stderr was captured from the loader process."
 	}
 	if outputTruncated {
-		detail += "\nThe captured stdout/stderr exceeded the 2 MiB API limit and was truncated."
+		detail += "\nThe captured stdout/stderr exceeded the 8 MiB API limit and was truncated."
 	}
 	return detail + "\nSee the captured combined stdout/stderr below for the loader's full diagnostic message."
 }
@@ -879,11 +963,15 @@ func runLoaderExecutionProcess(
 	command.Stdout = output
 	command.Stderr = output
 	err := command.Run()
-	exitCode := 0
+	exitCode := -1
 	if command.ProcessState != nil {
 		exitCode = command.ProcessState.ExitCode()
 	}
+	fmt.Fprintln(output, "--- end combined loader stdout and stderr ---")
+	fmt.Fprintf(output, "Finished UTC: %s\n", time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(output, "Process exit code: %d\n", exitCode)
 	if err != nil {
+		fmt.Fprintf(output, "Process error: %v\n", err)
 		return exitCode, err
 	}
 	return exitCode, nil
