@@ -30,11 +30,11 @@ class RecordingOpener:
 class FocusAPIClientTests(unittest.TestCase):
     def test_health(self):
         opener = RecordingOpener(
-            {"status": "ok", "version": "26.12.0-loader-diagnostics"}
+            {"status": "ok", "version": "26.13.0-schema-deployment-diagnostics"}
         )
         result = FocusAPIClient("http://127.0.0.1:8080/", opener=opener).health()
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.version, "26.12.0-loader-diagnostics")
+        self.assertEqual(result.version, "26.13.0-schema-deployment-diagnostics")
         self.assertEqual(opener.urls[0][0], "http://127.0.0.1:8080/api/v1/health")
 
     def test_aliases(self):
@@ -131,7 +131,7 @@ class FocusAPIClientTests(unittest.TestCase):
                 "connectAlias": "FOCUS_HIGH",
                 "adminUsername": "ADMIN",
                 "schema": "FOCUS_APP",
-                "scriptName": "deploy_focus_schema_with_sqlloader_audit.sh",
+                "scriptName": "run_deploy_focus_schema_with_sqlloader_audit.sh",
                 "dropExisting": False,
                 "startedAtUtc": "2026-08-10T12:00:00Z",
                 "finishedAtUtc": "2026-08-10T12:00:15Z",
@@ -140,7 +140,10 @@ class FocusAPIClientTests(unittest.TestCase):
                 "tableLookupSucceeded": True,
                 "tableCount": 1,
                 "tables": [{"owner": "FOCUS_APP", "tableName": "TEMP_OCI_FOCUS"}],
+                "workingDirectory": "/opt/focus-loader/sql_scripts",
+                "commandLine": "export DB_ADMIN_PASSWORD='[REDACTED]'\n./run_deploy_focus_schema_with_sqlloader_audit.sh",
                 "output": "SCHEMA DEPLOYMENT COMPLETE",
+                "outputTruncated": False,
             }
         )
         result = FocusAPIClient("http://127.0.0.1:8080", opener=opener).deploy_schema(
@@ -148,6 +151,8 @@ class FocusAPIClientTests(unittest.TestCase):
         )
         self.assertTrue(result.deployment_succeeded)
         self.assertEqual(result.tables[0].table_name, "TEMP_OCI_FOCUS")
+        self.assertIn("run_deploy_focus_schema", result.command_line)
+        self.assertFalse(result.output_truncated)
         request = opener.requests[0]
         self.assertEqual(request.method, "POST")
         self.assertEqual(request.full_url, "http://127.0.0.1:8080/api/v1/schema/deploy")
@@ -168,7 +173,7 @@ class FocusAPIClientTests(unittest.TestCase):
                 "connectAlias": "FOCUS_HIGH",
                 "adminUsername": "ADMIN",
                 "schema": "FOCUS_APP",
-                "scriptName": "deploy_focus_schema_with_sqlloader_audit.sh",
+                "scriptName": "run_deploy_focus_schema_with_sqlloader_audit.sh",
                 "dropExisting": True,
                 "startedAtUtc": "2026-08-10T12:00:00Z",
                 "finishedAtUtc": "2026-08-10T12:00:01Z",
@@ -177,7 +182,10 @@ class FocusAPIClientTests(unittest.TestCase):
                 "tableLookupSucceeded": False,
                 "tableCount": 0,
                 "tables": [],
+                "workingDirectory": "/opt/focus-loader/sql_scripts",
+                "commandLine": "export DB_ADMIN_PASSWORD='[REDACTED]'\n./run_deploy_focus_schema_with_sqlloader_audit.sh",
                 "output": "sqlplus not found in PATH",
+                "outputTruncated": False,
                 "error": "schema deployment failed: exit status 1",
             }
         )

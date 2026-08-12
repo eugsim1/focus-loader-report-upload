@@ -57,7 +57,10 @@ class SchemaDeployment:
     exit_code: int
     deployment_succeeded: bool
     table_lookup_succeeded: bool
+    working_directory: str
+    command_line: str
     output: str
+    output_truncated: bool
     error: str
     tables: tuple[DatabaseTable, ...]
 
@@ -300,7 +303,10 @@ class FocusAPIClient:
             exit_code=self._required_int(payload, "exitCode"),
             deployment_succeeded=self._required_bool(payload, "deploymentSucceeded"),
             table_lookup_succeeded=self._required_bool(payload, "tableLookupSucceeded"),
+            working_directory=self._required_string(payload, "workingDirectory"),
+            command_line=self._required_string(payload, "commandLine"),
             output=output,
+            output_truncated=self._required_bool(payload, "outputTruncated"),
             error=error,
             tables=tuple(tables),
         )

@@ -74,10 +74,19 @@ for account in "${FOCUSLOADER_USER}" "${ORACLE_USER}"; do
     exit 1
   fi
 done
-if [[ ! -x "${ORACLE_SQL_SCRIPTS_DIR}/deploy_focus_schema_with_sqlloader_audit.sh" ]]; then
-  echo "ERROR: Oracle deployment script is missing from ${ORACLE_SQL_SCRIPTS_DIR}" >&2
-  exit 1
-fi
+for deployment_script in \
+  "${ORACLE_SQL_SCRIPTS_DIR}/run_deploy_focus_schema_with_sqlloader_audit.sh" \
+  "${ORACLE_SQL_SCRIPTS_DIR}/deploy_focus_schema_with_sqlloader_audit.sh"; do
+  if [[ ! -f "${deployment_script}" ]]; then
+    echo "ERROR: Oracle deployment script is missing: ${deployment_script}" >&2
+    exit 1
+  fi
+  chmod 0750 "${deployment_script}"
+  if ! runuser -u "${ORACLE_USER}" -- test -x "${deployment_script}"; then
+    echo "ERROR: ${ORACLE_USER} cannot execute ${deployment_script}" >&2
+    exit 1
+  fi
+done
 for config in "${ORACLE_SOURCE_DIR}/focus.conf" "${ORACLE_SQL_SCRIPTS_DIR}/focus.conf"; do
   if ! runuser -u "${ORACLE_USER}" -- test -w "${config}"; then
     echo "ERROR: ${ORACLE_USER} must be able to update ${config}" >&2
@@ -105,8 +114,9 @@ install -o "${FOCUSLOADER_USER}" -g "${FOCUSLOADER_GROUP}" -m 0640 \
   "${SOURCE_DIR}/streamlit-ui/.streamlit/config.toml" \
   "${APP_DIR}/streamlit-ui/.streamlit/config.toml"
 install -o root -g "${FOCUSLOADER_GROUP}" -m 0750 \
+  "${SOURCE_DIR}/sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh" \
   "${SOURCE_DIR}/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh" \
-  "${APP_DIR}/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh"
+  "${APP_DIR}/sql_scripts/"
 if [[ ! -e "${APP_DIR}/sql_scripts/focus.conf" ]]; then
   install -o "${FOCUSLOADER_USER}" -g "${FOCUSLOADER_GROUP}" -m 0640 \
     "${SOURCE_DIR}/sql_scripts/focus.conf" "${APP_DIR}/sql_scripts/focus.conf"

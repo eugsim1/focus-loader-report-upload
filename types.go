@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.12.0-loader-diagnostics"
+	version       = "26.13.0-schema-deployment-diagnostics"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

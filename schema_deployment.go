@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	schemaDeploymentScriptName = "deploy_focus_schema_with_sqlloader_audit.sh"
+	schemaDeploymentScriptName = "run_deploy_focus_schema_with_sqlloader_audit.sh"
 	schemaDeploymentSessionTTL = 15 * time.Minute
 	schemaDeploymentTimeout    = 10 * time.Minute
-	maxSchemaDeploymentOutput  = 512 * 1024
+	maxSchemaDeploymentOutput  = 2 * 1024 * 1024
 )
 
 type schemaDeploymentRequest struct {
@@ -49,6 +49,9 @@ type schemaDeploymentResponse struct {
 	TableCount           int                 `json:"tableCount"`
 	Tables               []databaseTableInfo `json:"tables"`
 	Output               string              `json:"output"`
+	OutputTruncated      bool                `json:"outputTruncated"`
+	WorkingDirectory     string              `json:"workingDirectory"`
+	CommandLine          string              `json:"commandLine"`
 	Error                string              `json:"error,omitempty"`
 }
 
@@ -64,10 +67,11 @@ type schemaDeploymentInput struct {
 }
 
 type schemaDeploymentExecution struct {
-	Output        string
-	ExitCode      int
-	StartedAtUTC  time.Time
-	FinishedAtUTC time.Time
+	Output          string
+	OutputTruncated bool
+	ExitCode        int
+	StartedAtUTC    time.Time
+	FinishedAtUTC   time.Time
 }
 
 type schemaDeploymentRunner func(
@@ -282,6 +286,16 @@ func handleSchemaDeployment(
 			credential.Password,
 			request.TargetSchemaPassword,
 		),
+		OutputTruncated:  execution.OutputTruncated,
+		WorkingDirectory: scriptDirectory,
+		CommandLine: schemaDeploymentCommandPreview(schemaDeploymentInput{
+			ScriptDirectory: scriptDirectory,
+			TNSAdmin:        tnsAdmin,
+			ConnectAlias:    aliases.FirstAlias,
+			AdminUsername:   credential.Username,
+			TargetSchema:    request.TargetSchema,
+			DropExisting:    request.DropExisting,
+		}),
 	}
 	if runErr != nil {
 		response.Error = redactDatabasePasswords(
@@ -342,8 +356,14 @@ func runFocusSchemaDeployment(
 		return result, fmt.Errorf("load deployment script %s: %w", scriptPath, err)
 	}
 	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
-		result.FinishedAtUTC = time.Now().UTC()
-		return result, fmt.Errorf("deployment script is not a regular executable file: %s", scriptPath)
+		if !info.Mode().IsRegular() {
+			result.FinishedAtUTC = time.Now().UTC()
+			return result, fmt.Errorf("deployment script is not a regular file: %s", scriptPath)
+		}
+		if err := os.Chmod(scriptPath, info.Mode().Perm()|0o100); err != nil {
+			result.FinishedAtUTC = time.Now().UTC()
+			return result, fmt.Errorf("make deployment wrapper executable %s: %w", scriptPath, err)
+		}
 	}
 
 	command := exec.CommandContext(ctx, scriptPath)
@@ -373,6 +393,7 @@ func runFocusSchemaDeployment(
 	err = command.Wait()
 	result.FinishedAtUTC = time.Now().UTC()
 	result.Output = output.String()
+	result.OutputTruncated = output.Truncated()
 	if err == nil && credentialWriteErr != nil {
 		return result, fmt.Errorf("send deployment credentials: %w", credentialWriteErr)
 	}
@@ -388,6 +409,34 @@ func runFocusSchemaDeployment(
 		return result, fmt.Errorf("deployment exceeded the %s timeout", schemaDeploymentTimeout)
 	}
 	return result, err
+}
+
+func schemaDeploymentCommandPreview(input schemaDeploymentInput) string {
+	exports := []struct {
+		name  string
+		value string
+	}{
+		{"TNS_ADMIN", input.TNSAdmin},
+		{"DB_ADMIN_USER", input.AdminUsername},
+		{"DB_ADMIN_PASSWORD", "[REDACTED]"},
+		{"DB_TNS_ALIAS", input.ConnectAlias},
+		{"TARGET_SCHEMA", input.TargetSchema},
+		{"TARGET_SCHEMA_PASSWORD", "[REDACTED]"},
+		{"DROP_EXISTING", strconv.FormatBool(input.DropExisting)},
+	}
+	lines := make([]string, 0, len(exports)+2)
+	for _, item := range exports {
+		lines = append(lines, "export "+item.name+"="+schemaDeploymentShellQuote(item.value))
+	}
+	lines = append(lines,
+		"cd -- "+schemaDeploymentShellQuote(input.ScriptDirectory),
+		"./"+schemaDeploymentScriptName,
+	)
+	return strings.Join(lines, "\n")
+}
+
+func schemaDeploymentShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func schemaDeploymentEnvironment(base []string, input schemaDeploymentInput) []string {

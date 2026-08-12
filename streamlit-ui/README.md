@@ -23,9 +23,10 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
   CSV download of the returned owner/table names.
 - A second **Deploy schema** tab that appears only after the first tab verifies
   the database login. It runs the fixed
-  `sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh` file, shows its
-  redacted console result, reconnects with the submitted target-schema password,
-  and lists every table in the created schema.
+  `sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh` wrapper, shows
+  its redacted exports, command, and combined console result, provides the
+  execution log as a download, reconnects with the submitted target-schema
+  password, and lists every table in the created schema.
 - Read-only display of the first TNS alias and `tnsnames.ora` source path.
 - Interactive selection from every alias in the file.
 - Form-based loader command builder with direct database password as the default
@@ -101,10 +102,12 @@ read time. For a table lookup, Streamlit sends the submitted credentials to the
 loopback-only Go API; the Go process uses the first alias, executes a fixed
 bind-variable query against `ALL_TABLES`, returns owner/table names, and closes
 the connection. A successful lookup also creates one short-lived deployment
-authorization. The deployment API loads only the server-configured script,
-passes both passwords through an anonymous inherited file descriptor instead of
-command arguments or environment values, redacts both passwords from output,
-and uses the new schema's password for the final fixed table query. The loader
+authorization. The deployment API loads only the server-configured wrapper,
+passes both passwords to it through an anonymous inherited file descriptor
+instead of command arguments or its initial environment, and the wrapper
+exports them only to its fixed child deployment script. Both passwords are
+redacted from output. The API then uses the new schema's password for the final
+fixed table query. The loader
 job API separately revalidates builder fields, starts only the configured
 binary, and uses fixed current-schema row-count and analytics SQL while the job
 runs. Cost totals are grouped by `CHARGE_PERIOD_START` month and
@@ -155,7 +158,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.12.0-loader-diagnostics"
+  "version": "26.13.0-schema-deployment-diagnostics"
 }
 ```
 
@@ -248,17 +251,20 @@ Request body:
 
 The backend supplies `TNS_ADMIN`, the first TNS alias, the authenticated
 administrator user/password, fixed working and parent `focus.conf` paths, and
-the fixed script path. The browser cannot select another shell script, TNS
+the fixed wrapper path. The browser cannot select another shell script, TNS
 directory, alias, or configuration path. The form's `dropExisting` checkbox is
-the only deletion confirmation; when selected, the fixed script drops the
-existing schema and all its objects before recreating it.
+the only deletion confirmation; when selected, the fixed script locks the
+target user, disconnects its active sessions, and drops the existing schema and
+all its objects before recreating it.
 Common administrative schemas and the authenticated login schema are rejected
 as deployment targets.
 
-The response includes the script exit code, start/finish timestamps, redacted
-combined output, deployment/table-lookup status, and the tables found by logging
-in as the created schema with the submitted target password. A script failure is
-returned as a structured result so its console output remains visible.
+The response includes the script exit code, start/finish timestamps, working
+directory, password-redacted effective exports and command, up to 2 MiB of
+redacted combined output, `outputTruncated`, deployment/table-lookup status, and
+the tables found by logging in as the created schema with the submitted target
+password. A script failure is returned as a structured result so its console
+output remains visible and downloadable as a text log.
 
 ### Loader execution jobs
 
@@ -352,7 +358,7 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 ## 1. Build and install the updated Go backend
 
 The execution, cost, and schema-statistics tabs require the
-`26.12.0-loader-diagnostics` Go API and UI to be installed together.
+`26.13.0-schema-deployment-diagnostics` Go API and UI to be installed together.
 
 ```bash
 cd /home/oracle/focus-loader-report-upload
@@ -368,7 +374,7 @@ dist/focus-loader-report-upload-linux-amd64 -version
 Expected version:
 
 ```text
-focus-loader-report-upload 26.12.0-loader-diagnostics
+focus-loader-report-upload 26.13.0-schema-deployment-diagnostics
 ```
 
 ## 2. Verify TNS permissions
@@ -433,7 +439,7 @@ world-readable.
 ## 3A. Automated installation
 
 Review the installer before running it. It installs the focusloader binary when
-needed, copies the UI and fixed deployment script, creates an isolated virtual
+needed, copies the UI and both fixed deployment scripts, creates an isolated virtual
 environment and work directories, installs Streamlit plus both Go backend
 services, verifies SQL*Plus/configuration access, and waits for all three local
 health endpoints.
@@ -508,8 +514,9 @@ sudo install -o focusloader -g focusloader -m 0640 \
   streamlit-ui/.streamlit/config.toml \
   /opt/focus-loader/streamlit-ui/.streamlit/config.toml
 sudo install -o root -g focusloader -m 0750 \
+  sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh \
   sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh \
-  /opt/focus-loader/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
+  /opt/focus-loader/sql_scripts/
 sudo install -o focusloader -g focusloader -m 0640 \
   sql_scripts/focus.conf /opt/focus-loader/sql_scripts/focus.conf
 sudo -u focusloader test -w /opt/focus-loader/focus.conf
@@ -634,10 +641,16 @@ This tab does not accept SQL text and does not need a `.sql` file.
    user. The deployment DDL is not idempotent, so an existing set of tables can
    still cause the script to fail.
 5. To replace a schema, select **Drop the existing target schema and all its
-   objects**. This runs `DROP USER ... CASCADE` before schema creation.
+   objects**. The deployment locks the target user, disconnects its active
+   sessions across database instances, retries while Oracle completes session
+   cleanup, and then runs `DROP USER ... CASCADE` before schema creation.
 6. Select **Run schema deployment** and wait for the console result.
-7. Review the exit code, redacted output, and table list obtained by connecting
-   as the target schema with the same target password.
+7. Review the exit code, working directory, password-redacted exports and
+   command, combined stdout/stderr, and table list obtained by connecting as the
+   target schema with the same target password.
+8. Select **Download deployment execution log** to save the same diagnostics.
+   The log never contains either submitted password and explicitly says when
+   its bounded console capture was truncated.
 
 The authorization is one-use. Authenticate in the first tab again before each
 additional deployment. Closing/restarting the Go service also invalidates it.
@@ -843,13 +856,15 @@ mkdir -p dist
 CGO_ENABLED=1 go build -buildvcs=false -trimpath \
   -o dist/focus-loader-report-upload-linux-amd64 .
 chmod 0750 dist/focus-loader-report-upload-linux-amd64
+chmod 0750 sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh
 chmod 0750 sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
 ./dist/focus-loader-report-upload-linux-amd64 -version
 ```
 
-The deployment script must remain executable. Git tracks this file with mode
+Both deployment scripts must remain executable. Git tracks them with mode
 `100755`; `chmod 0750` also repairs a checkout created on a filesystem that did
-not preserve the executable bit.
+not preserve executable bits. The installer repeats this repair before starting
+the backends.
 
 ### 8.4 Verify Oracle Net, SQL*Plus, and OCI inputs
 
@@ -896,8 +911,8 @@ on port 8081.
 Oracle Linux can label a binary created below `/home/oracle` as `user_tmp_t` or
 `user_home_t`. Systemd then fails before application startup with
 `status=203/EXEC` and an AVC containing `denied { execute }`. Keep SELinux
-enforcing and register narrow, persistent `bin_t` rules for only the two files
-that the oracle backend executes:
+enforcing and register narrow, persistent `bin_t` rules for only the three files
+that the oracle backend may execute:
 
 ```bash
 sudo semanage fcontext -a -t bin_t \
@@ -907,6 +922,12 @@ sudo semanage fcontext -a -t bin_t \
   '/home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64'
 
 sudo semanage fcontext -a -t bin_t \
+  '/home/oracle/focus-loader-report-upload/sql_scripts/run_deploy_focus_schema_with_sqlloader_audit\.sh' \
+  2>/dev/null \
+  || sudo semanage fcontext -m -t bin_t \
+  '/home/oracle/focus-loader-report-upload/sql_scripts/run_deploy_focus_schema_with_sqlloader_audit\.sh'
+
+sudo semanage fcontext -a -t bin_t \
   '/home/oracle/focus-loader-report-upload/sql_scripts/deploy_focus_schema_with_sqlloader_audit\.sh' \
   2>/dev/null \
   || sudo semanage fcontext -m -t bin_t \
@@ -914,10 +935,12 @@ sudo semanage fcontext -a -t bin_t \
 
 sudo restorecon -Fv \
   /home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64 \
+  /home/oracle/focus-loader-report-upload/sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh \
   /home/oracle/focus-loader-report-upload/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
 
 ls -lZ \
   /home/oracle/focus-loader-report-upload/dist/focus-loader-report-upload-linux-amd64 \
+  /home/oracle/focus-loader-report-upload/sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh \
   /home/oracle/focus-loader-report-upload/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
 ```
 
@@ -1012,7 +1035,7 @@ sudo grep '^FOCUS_API_URL' /etc/focus-loader/streamlit.env
 ```
 
 An older binary does not provide schema statistics; install the
-`26.12.0-loader-diagnostics` binary before using the current interface.
+`26.13.0-schema-deployment-diagnostics` binary before using the current interface.
 
 ### The alias endpoint returns an error
 
@@ -1056,6 +1079,8 @@ version, fixed script, SQL*Plus, configuration permissions, and service settings
 ```bash
 /opt/focus-loader/focus-loader-report-upload -version
 sudo -u focusloader test -x \
+  /opt/focus-loader/sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh
+sudo -u focusloader test -x \
   /opt/focus-loader/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
 sudo -u focusloader test -w /opt/focus-loader/sql_scripts/focus.conf
 sudo -u focusloader test -w /opt/focus-loader/focus.conf
@@ -1063,6 +1088,12 @@ sudo -u focusloader bash -c \
   'source /etc/focus-loader/tns-gui.env && command -v sqlplus && sqlplus -version'
 sudo journalctl -u focus-loader-tns-gui.service -n 200 --no-pager
 ```
+
+An `ORA-01940` from an older installation means the target schema still has an
+active session. Version `26.13.0-schema-deployment-diagnostics` locks the user,
+disconnects those sessions, and retries the drop. If it persists after upgrade,
+download the execution log and verify that the administrator can query
+`GV$SESSION` and run `ALTER SYSTEM DISCONNECT SESSION`.
 
 An HTTP `401` means the one-use token expired, was already consumed, or the Go
 service restarted; authenticate again. HTTP `409` means another deployment is
@@ -1122,12 +1153,15 @@ directory to roll back application code.
 - The administrator password is retained only in Go process memory for at most
   15 minutes behind a random one-use token. Streamlit stores only the token.
 - The target password exists only for the deployment request and created-schema
-  verification. Passwords reach the script through an anonymous inherited file
-  descriptor, are not placed in its command arguments/environment, and are
-  redacted from returned errors/output.
+  verification. Passwords reach the fixed wrapper through an anonymous
+  inherited file descriptor, are not placed in its initial arguments or
+  environment, and are exported only to the fixed child deployment script.
+  Returned errors, output, displayed commands, and downloadable logs redact both
+  passwords.
 - The metadata query is fixed in the Go binary and binds the schema value; no
   browser-supplied SQL is accepted.
 - The only executable deployment target is the server-configured
+  `run_deploy_focus_schema_with_sqlloader_audit.sh` wrapper and its fixed child
   `deploy_focus_schema_with_sqlloader_audit.sh`; browser users cannot supply a
   command, script path, TNS path, alias, or config path.
 - The installer makes the script and its directory root-owned. The hardened Go

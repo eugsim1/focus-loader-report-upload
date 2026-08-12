@@ -33,12 +33,16 @@ Do not pass passwords as command-line arguments because they can appear in the
 process list and shell history.
 
 The Streamlit deployment workflow runs only
-`deploy_focus_schema_with_sqlloader_audit.sh` from the installed `sql_scripts`
-directory. It sends both passwords through an anonymous inherited file
-descriptor rather than command arguments or process-environment values, sets
-`FOCUS_IGNORE_DOTENV=true` so a local `.env` cannot override submitted values,
-and closes/unsets the credential channel before starting SQL*Plus. The
-administrator password is reused through a
+`run_deploy_focus_schema_with_sqlloader_audit.sh` from the installed
+`sql_scripts` directory. It sends both passwords to that wrapper through an
+anonymous inherited file descriptor rather than command arguments or the
+wrapper's initial process environment. The wrapper sets
+`FOCUS_IGNORE_DOTENV=true`, reads and closes the protected channel, exports all
+validated values (`TNS_ADMIN`, `DB_ADMIN_USER`, `DB_ADMIN_PASSWORD`,
+`DB_TNS_ALIAS`, `TARGET_SCHEMA`, `TARGET_SCHEMA_PASSWORD`, and
+`DROP_EXISTING`) only to its fixed child
+`deploy_focus_schema_with_sqlloader_audit.sh`, and never prints either
+password. The administrator password is reused through a
 short-lived one-use backend authorization; the target-schema password is reused
 only to verify and list the created schema's tables.
 
@@ -49,7 +53,9 @@ only to verify and list the created schema's tables.
 ```
 
 Set `DROP_EXISTING=true` only when intentionally replacing the target schema.
-The default in `.env.example` preserves an existing schema.
+The default in `.env.example` preserves an existing schema. Replacement locks
+the target user, disconnects its active sessions, and retries the drop briefly
+to avoid `ORA-01940` while Oracle completes session cleanup.
 
 ## Maintenance
 

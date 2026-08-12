@@ -1,5 +1,24 @@
 # Changelog
 
+## 26.13.0-schema-deployment-diagnostics
+
+- Changed the Streamlit schema-deployment backend to execute only
+  `run_deploy_focus_schema_with_sqlloader_audit.sh`. The wrapper receives the
+  two passwords through a protected file descriptor, exports every validated
+  Streamlit value to the fixed child deployment script, and never prints the
+  passwords.
+- Made both schema scripts executable during installation, copied both scripts
+  into the focusloader installation, and added a best-effort executable-bit
+  repair for a regular wrapper file at backend launch.
+- Prevented `ORA-01940` during approved schema replacement by locking the target
+  user, disconnecting its sessions across database instances, and retrying
+  `DROP USER ... CASCADE` while Oracle finishes session cleanup.
+- Added schema-deployment working-directory, redacted export/command preview,
+  combined stdout/stderr, output-truncation status, and a downloadable execution
+  log to the Streamlit deployment result; increased bounded capture to 2 MiB.
+- Added Go, Python, Bash-wrapper, shell syntax, and password-redaction regression
+  coverage for the updated deployment path.
+
 ## 26.12.0-loader-diagnostics
 
 - Expanded loader-job API results with the exact backend executable and

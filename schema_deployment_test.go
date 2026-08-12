@@ -45,6 +45,37 @@ func TestSchemaDeploymentEnvironmentExcludesPasswords(t *testing.T) {
 	}
 }
 
+func TestSchemaDeploymentCommandPreviewUsesWrapperAndRedactsPasswords(t *testing.T) {
+	input := schemaDeploymentInput{
+		ScriptDirectory:      "/opt/focus-loader/sql_scripts",
+		TNSAdmin:             "/opt/oracle/wallet",
+		ConnectAlias:         "FOCUS_HIGH",
+		AdminUsername:        "ADMIN",
+		AdminPassword:        "admin-secret",
+		TargetSchema:         "FOCUS_APP",
+		TargetSchemaPassword: "schema-secret",
+		DropExisting:         true,
+	}
+	preview := schemaDeploymentCommandPreview(input)
+	for _, expected := range []string{
+		"export DB_ADMIN_PASSWORD='[REDACTED]'",
+		"export DB_TNS_ALIAS='FOCUS_HIGH'",
+		"export TARGET_SCHEMA='FOCUS_APP'",
+		"export TARGET_SCHEMA_PASSWORD='[REDACTED]'",
+		"export DROP_EXISTING='true'",
+		"./run_deploy_focus_schema_with_sqlloader_audit.sh",
+	} {
+		if !strings.Contains(preview, expected) {
+			t.Fatalf("deployment preview is missing %q: %s", expected, preview)
+		}
+	}
+	for _, secret := range []string{"admin-secret", "schema-secret"} {
+		if strings.Contains(preview, secret) {
+			t.Fatalf("deployment preview contains password %q: %s", secret, preview)
+		}
+	}
+}
+
 func TestSchemaDeploymentSessionIsOneUseAndExpires(t *testing.T) {
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	store := newSchemaDeploymentSessionStore()

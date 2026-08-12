@@ -107,6 +107,7 @@ PROMPT ---- Preparing target schema owner ----
 DECLARE
   v_count NUMBER;
   v_drop_existing VARCHAR2(10) := LOWER('${DROP_EXISTING}');
+  v_disconnected_sessions PLS_INTEGER := 0;
 BEGIN
   SELECT COUNT(*) INTO v_count 
   FROM all_users 
@@ -114,8 +115,48 @@ BEGIN
 
   IF v_count > 0 THEN
     IF v_drop_existing IN ('true', 'yes', '1') THEN
-      EXECUTE IMMEDIATE 'DROP USER ${SCHEMA} CASCADE';
-      DBMS_OUTPUT.PUT_LINE('Existing user dropped');
+      -- Prevent new logins, disconnect sessions on every RAC instance, and
+      -- retry while Oracle finishes cleaning up disconnected sessions.
+      EXECUTE IMMEDIATE 'ALTER USER ${SCHEMA} ACCOUNT LOCK';
+      FOR active_session IN (
+        SELECT inst_id, sid, serial#
+        FROM gv\$session
+        WHERE username = UPPER('${SCHEMA}')
+      ) LOOP
+        BEGIN
+          EXECUTE IMMEDIATE
+            'ALTER SYSTEM DISCONNECT SESSION ''' ||
+            active_session.sid || ',' || active_session.serial# || ',@' ||
+            active_session.inst_id || ''' IMMEDIATE';
+          v_disconnected_sessions := v_disconnected_sessions + 1;
+        EXCEPTION
+          WHEN OTHERS THEN
+            IF SQLCODE NOT IN (-26, -30) THEN
+              RAISE;
+            END IF;
+        END;
+      END LOOP;
+      DBMS_OUTPUT.PUT_LINE(
+        'Disconnected target-schema sessions: ' || v_disconnected_sessions
+      );
+
+      FOR drop_attempt IN 1..10 LOOP
+        BEGIN
+          EXECUTE IMMEDIATE 'DROP USER ${SCHEMA} CASCADE';
+          DBMS_OUTPUT.PUT_LINE('Existing user dropped');
+          EXIT;
+        EXCEPTION
+          WHEN OTHERS THEN
+            IF SQLCODE != -1940 OR drop_attempt = 10 THEN
+              RAISE;
+            END IF;
+            DBMS_OUTPUT.PUT_LINE(
+              'DROP USER is waiting for disconnected sessions; retry ' ||
+              drop_attempt || '/10'
+            );
+            DBMS_SESSION.SLEEP(1);
+        END;
+      END LOOP;
       v_count := 0;
     ELSE
       EXECUTE IMMEDIATE 'ALTER USER ${SCHEMA} IDENTIFIED BY "${TARGET_PASS_SQL}"';

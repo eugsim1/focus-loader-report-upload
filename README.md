@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.12.0-loader-diagnostics`
+Version `26.13.0-schema-deployment-diagnostics`
 
 > **Independent project disclaimer**
 >
@@ -107,8 +107,9 @@ Current interactions include:
   another Oracle user through a masked password form, and lists an accessible
   schema's tables;
 - a gated second Deploy schema tab that runs the fixed
-  `sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh`, displays redacted
-  output, and lists the created schema's tables using its submitted password;
+  `sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh` wrapper,
+  displays redacted output and a downloadable execution log, and lists the
+  created schema's tables using its submitted password;
 - display and selection of every alias in `$TNS_ADMIN/tnsnames.ora`;
 - diagnostic API output without connect descriptors or wallet content;
 - a validated command builder with direct-password or OCI Vault database
@@ -138,13 +139,15 @@ cannot supply an executable path or shell command.
 A successful first-tab login creates a
 random, 15-minute, one-use token; Streamlit stores that opaque token instead of
 the administrator password. The second tab can execute only the installed fixed
-deployment script, with server-controlled TNS and configuration paths. The
+deployment wrapper and its fixed child script, with server-controlled TNS and
+configuration paths. The
 installer securely copies `/home/oracle/.oci` to `/home/focusloader/.oci`,
 rewrites copied key/token paths, and provisions separate loopback services. All
 services are reached through SSH/OCI Bastion or an authenticated TLS reverse
 proxy.
 
-Quick deployment after installing the `26.12.0-loader-diagnostics` Go binary:
+Quick deployment after installing the
+`26.13.0-schema-deployment-diagnostics` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip
@@ -998,7 +1001,11 @@ The program returns an error to avoid silently losing incremental state. Fix per
 - Review all scripts and policies for your tenancy before deployment.
 - Keep the Go API and Streamlit listeners on loopback; use SSH/OCI Bastion or an authenticated TLS reverse proxy.
 - The Go process may retain verified administrator credentials in memory for at most 15 minutes behind a random one-use deployment token; it never returns or logs the password, and Streamlit stores only the token.
-- The deployment UI accepts no shell command, script path, SQL text, TNS path, alias, or config path. It can run only the installed `deploy_focus_schema_with_sqlloader_audit.sh`; keep `DROP_EXISTING=false` unless an approved replacement explicitly requires `DROP USER ... CASCADE`.
+- The deployment UI accepts no shell command, script path, SQL text, TNS path,
+  alias, or config path. It can run only the installed
+  `run_deploy_focus_schema_with_sqlloader_audit.sh` wrapper and its fixed child
+  script; keep `DROP_EXISTING=false` unless an approved replacement explicitly
+  requires `DROP USER ... CASCADE`.
 
 ## Publish to GitHub
 

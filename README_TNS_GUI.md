@@ -107,7 +107,7 @@ alias and runs a fixed, read-only `ALL_TABLES` query; it does not accept SQL tex
 or require an external SQL file. A successful lookup also returns a short-lived,
 one-use token that can authorize `POST /api/v1/schema/deploy`. That endpoint can
 run only the server-configured
-`sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh`; it does not accept a
+`sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh`; it does not accept a
 browser-supplied command, script path, TNS path, alias, config path, or SQL text.
 The versioned `POST /api/v1/loader/jobs` endpoint accepts only validated
 structured loader fields, starts the fixed `FOCUS_LOADER_EXECUTABLE`, and exposes

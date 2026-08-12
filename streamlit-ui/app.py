@@ -115,6 +115,32 @@ def tables_csv(tables: tuple[DatabaseTable, ...]) -> str:
     return output.getvalue()
 
 
+def schema_deployment_log(result: SchemaDeployment) -> str:
+    lines = [
+        "FOCUS schema deployment execution log",
+        f"Schema: {result.schema}",
+        f"TNS alias: {result.connect_alias}",
+        f"Administrator: {result.admin_username}",
+        f"Script: {result.script_name}",
+        f"Working directory: {result.working_directory}",
+        f"Drop existing: {str(result.drop_existing).lower()}",
+        f"Started UTC: {result.started_at_utc}",
+        f"Finished UTC: {result.finished_at_utc}",
+        f"Exit code: {result.exit_code}",
+        f"Deployment succeeded: {str(result.deployment_succeeded).lower()}",
+        f"Output truncated: {str(result.output_truncated).lower()}",
+        "",
+        "Effective exports and command (passwords redacted):",
+        result.command_line,
+        "",
+        "Combined stdout and stderr:",
+        result.output or "(the script returned no console output)",
+    ]
+    if result.error:
+        lines.extend(("", "Backend error:", result.error))
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def clear_deployment_authorization() -> None:
     st.session_state.pop("database_deployment_token", None)
     st.session_state.pop("database_deployment_token_expires_at_utc", None)
@@ -247,7 +273,7 @@ def render_database_tables(api_url: str, catalog: AliasCatalog) -> None:
 def render_schema_deployment(api_url: str, catalog: AliasCatalog) -> None:
     st.subheader("Deploy FOCUS schema")
     st.caption(
-        "Runs the fixed sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh "
+        "Runs the fixed sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh "
         "file on the Linux server. TNS_ADMIN and the first TNS alias are loaded "
         "by the Go backend and cannot be overridden in the browser."
     )
@@ -269,7 +295,7 @@ def render_schema_deployment(api_url: str, catalog: AliasCatalog) -> None:
             st.text_input("TNS alias", value=catalog.first_alias, disabled=True)
             st.text_input(
                 "Deployment script",
-                value="sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh",
+                value="sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh",
                 disabled=True,
             )
             target_schema = st.text_input(
@@ -366,10 +392,31 @@ def render_schema_deployment(api_url: str, catalog: AliasCatalog) -> None:
         f"Finished: {result.finished_at_utc}"
     )
     st.text_area(
-        "Deployment output",
+        "Effective exports and command (passwords redacted)",
+        value=result.command_line,
+        height=260,
+        disabled=True,
+    )
+    if result.output_truncated:
+        st.warning(
+            "The backend reached its deployment-output safety limit. The visible "
+            "output and downloaded log are marked as truncated."
+        )
+    st.text_area(
+        "Deployment combined stdout and stderr",
         value=result.output or "(the script returned no console output)",
         height=320,
         disabled=True,
+    )
+    log_timestamp = re.sub(r"[^0-9A-Za-z]+", "-", result.started_at_utc).strip("-")
+    st.download_button(
+        "Download deployment execution log",
+        data=schema_deployment_log(result),
+        file_name=(
+            f"{result.schema.lower()}-schema-deployment-"
+            f"{log_timestamp or 'execution'}.log"
+        ),
+        mime="text/plain",
     )
     if result.tables:
         st.dataframe(

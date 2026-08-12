@@ -277,6 +277,8 @@ configuration files:
 sudo -u focusloader bash -c \
   'source /etc/focus-loader/tns-gui.env && command -v sqlplus && sqlplus -version'
 sudo -u focusloader test -x \
+  /opt/focus-loader/sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh
+sudo -u focusloader test -x \
   /opt/focus-loader/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
 sudo -u focusloader test -w /opt/focus-loader/sql_scripts/focus.conf
 sudo -u focusloader test -w /opt/focus-loader/focus.conf
