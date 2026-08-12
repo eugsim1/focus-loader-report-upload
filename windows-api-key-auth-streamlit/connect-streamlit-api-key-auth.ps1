@@ -52,9 +52,18 @@ param(
     [int]$BastionSessionTtl = 3600,
 
     [ValidateRange(1, 65535)]
-    [int]$LocalPort = 8501,
+    [int]$SshLocalPort = 22,
 
-    [ValidateRange(1, 65535)]
+    [ValidateRange(0, 65535)]
+    [int]$OptionalPort1 = 0,
+
+    [ValidateRange(0, 65535)]
+    [int]$OptionalPort2 = 0,
+
+    [ValidateRange(0, 65535)]
+    [int]$LocalPort = 0,
+
+    [ValidateRange(0, 65535)]
     [int]$RemotePort = 8501,
 
     [ValidateRange(60, 3600)]
@@ -183,6 +192,7 @@ if ($ParameterFile) {
         'SshPrivateKeyPath', 'SshPublicKeyPath', 'OciUserId', 'OciTenancyId',
         'ApiKeyFingerprint', 'ApiPrivateKeyPath', 'ProfileName',
         'OciConfigFilePath', 'ConnectorScriptPath', 'BastionSessionTtl',
+        'SshLocalPort', 'OptionalPort1', 'OptionalPort2',
         'LocalPort', 'RemotePort', 'WaitSeconds', 'PollSeconds', 'TargetUser',
         'OciExecutable', 'SshExecutable', 'ReplaceExistingProfile',
         'KeepSession', 'DryRun'
@@ -229,8 +239,11 @@ $TargetUser = Get-EffectiveString -Name 'TargetUser' -CurrentValue $TargetUser -
 $OciExecutable = Get-EffectiveString -Name 'OciExecutable' -CurrentValue $OciExecutable -FileValues $parameterFileValues -ExplicitValues $explicitParameters
 $SshExecutable = Get-EffectiveString -Name 'SshExecutable' -CurrentValue $SshExecutable -FileValues $parameterFileValues -ExplicitValues $explicitParameters
 $BastionSessionTtl = Get-EffectiveInteger -Name 'BastionSessionTtl' -CurrentValue $BastionSessionTtl -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 30 -Maximum 10800
-$LocalPort = Get-EffectiveInteger -Name 'LocalPort' -CurrentValue $LocalPort -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 1 -Maximum 65535
-$RemotePort = Get-EffectiveInteger -Name 'RemotePort' -CurrentValue $RemotePort -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 1 -Maximum 65535
+$SshLocalPort = Get-EffectiveInteger -Name 'SshLocalPort' -CurrentValue $SshLocalPort -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 1 -Maximum 65535
+$OptionalPort1 = Get-EffectiveInteger -Name 'OptionalPort1' -CurrentValue $OptionalPort1 -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 0 -Maximum 65535
+$OptionalPort2 = Get-EffectiveInteger -Name 'OptionalPort2' -CurrentValue $OptionalPort2 -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 0 -Maximum 65535
+$LocalPort = Get-EffectiveInteger -Name 'LocalPort' -CurrentValue $LocalPort -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 0 -Maximum 65535
+$RemotePort = Get-EffectiveInteger -Name 'RemotePort' -CurrentValue $RemotePort -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 0 -Maximum 65535
 $WaitSeconds = Get-EffectiveInteger -Name 'WaitSeconds' -CurrentValue $WaitSeconds -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 60 -Maximum 3600
 $PollSeconds = Get-EffectiveInteger -Name 'PollSeconds' -CurrentValue $PollSeconds -FileValues $parameterFileValues -ExplicitValues $explicitParameters -Minimum 1 -Maximum 60
 $ReplaceExistingProfile = Get-EffectiveBoolean -Name 'ReplaceExistingProfile' -CurrentValue ([bool]$ReplaceExistingProfile) -FileValues $parameterFileValues -ExplicitValues $explicitParameters
@@ -433,6 +446,9 @@ $tunnelParameters = @{
     OciConfigFilePath = $configPath
     TargetUser = $TargetUser
     SessionTtl = $BastionSessionTtl
+    SshLocalPort = $SshLocalPort
+    OptionalPort1 = $OptionalPort1
+    OptionalPort2 = $OptionalPort2
     LocalPort = $LocalPort
     RemotePort = $RemotePort
     WaitSeconds = $WaitSeconds

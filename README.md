@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.14.0-streamlit-run-diagnostics`
+Version `26.15.0-multi-port-bastion-tunnels`
 
 > **Independent project disclaimer**
 >
@@ -150,7 +150,7 @@ services are reached through SSH/OCI Bastion or an authenticated TLS reverse
 proxy.
 
 Quick deployment after installing the
-`26.14.0-streamlit-run-diagnostics` Go binary:
+`26.15.0-multi-port-bastion-tunnels` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip
@@ -211,7 +211,9 @@ local alias/database-metadata service runs as `focusloader`. Database table
 lookup also requires explicit read access to the necessary Oracle Net wallet
 files, commonly `sqlnet.ora` and `cwallet.sso` for ADB.
 
-Two complete Windows authentication wrappers are also available:
+Four complete workstation authentication wrappers are available. Every wrapper
+opens loopback-only forwards for remote ports 22, 8501, 8502, and 5901 and can
+read up to two optional same-number ports from `output_settings.txt`:
 
 - [`windows-browser-auth-streamlit/README.md`](windows-browser-auth-streamlit/README.md)
   creates and validates a temporary OCI CLI security-token profile through
@@ -220,6 +222,30 @@ Two complete Windows authentication wrappers are also available:
   safely creates or validates a named local OCI API-key profile from explicit
   parameters or a validated `output_assets.txt` supplied with `-ParameterFile`,
   preserving other profiles and backing up changed configuration.
+- [`linux-browser-auth-streamlit/README.md`](linux-browser-auth-streamlit/README.md)
+  provides the equivalent interactive security-token workflow for a graphical
+  Linux workstation.
+- [`linux-api-key-auth-streamlit/README.md`](linux-api-key-auth-streamlit/README.md)
+  provides the equivalent API-key profile workflow for Linux.
+
+Windows API-key one-line command using the ignored settings file:
+
+```cmd
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-api-key-auth-streamlit\connect-streamlit-api-key-auth.ps1" -ParameterFile "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-api-key-auth-streamlit\output_settings.txt" -ReplaceExistingProfile
+```
+
+Windows browser-authentication one-line command:
+
+```cmd
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-browser-auth-streamlit\connect-streamlit-browser-auth.ps1" -ParameterFile "C:\Users\root\Documents\Codex\2026-07-27\for\work\focus-loader-report-upload-source\windows-browser-auth-streamlit\output_settings.txt"
+```
+
+Linux API-key and browser-authentication one-line commands:
+
+```bash
+cd /path/to/focus-loader-report-upload-source && ./linux-api-key-auth-streamlit/connect-streamlit-api-key-auth.sh --parameter-file ./linux-api-key-auth-streamlit/output_settings.txt --replace-existing-profile
+cd /path/to/focus-loader-report-upload-source && ./linux-browser-auth-streamlit/connect-streamlit-browser-auth.sh --parameter-file ./linux-browser-auth-streamlit/output_settings.txt
+```
 
 ## Contents
 
@@ -239,6 +265,8 @@ Two complete Windows authentication wrappers are also available:
 - [Complete Streamlit deployment guide](streamlit-ui/README.md)
 - [Windows browser-authentication tunnel](windows-browser-auth-streamlit/README.md)
 - [Windows API-key-authentication tunnel](windows-api-key-auth-streamlit/README.md)
+- [Linux browser-authentication tunnel](linux-browser-auth-streamlit/README.md)
+- [Linux API-key-authentication tunnel](linux-api-key-auth-streamlit/README.md)
 - [Complete command-line flag reference](#complete-command-line-flag-reference)
 - [Usage examples](#usage-examples)
 - [Cron-based incremental retrieval](#cron-based-incremental-retrieval)

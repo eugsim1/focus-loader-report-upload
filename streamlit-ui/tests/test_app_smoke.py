@@ -27,7 +27,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 if self.path == "/api/v1/health":
                     payload = {
                         "status": "ok",
-                        "version": "26.14.0-streamlit-run-diagnostics",
+                        "version": "26.15.0-multi-port-bastion-tunnels",
                     }
                 elif self.path == "/api/v1/tns/aliases":
                     payload = {
@@ -145,7 +145,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.assertIn("Reset interface", [button.label for button in app.button])
                 self.assertTrue(
                     any(
-                        "Installed release: 26.14.0-streamlit-run-diagnostics"
+                        "Installed release: 26.15.0-multi-port-bastion-tunnels"
                         in caption.value
                         for caption in app.caption
                     )
