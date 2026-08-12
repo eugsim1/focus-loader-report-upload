@@ -27,7 +27,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 if self.path == "/api/v1/health":
                     payload = {
                         "status": "ok",
-                        "version": "26.13.0-schema-deployment-diagnostics",
+                        "version": "26.13.1-force-remote-sync",
                     }
                 elif self.path == "/api/v1/tns/aliases":
                     payload = {

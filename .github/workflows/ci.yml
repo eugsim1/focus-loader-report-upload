@@ -55,10 +55,13 @@ jobs:
             scripts/rewrite-oci-config-paths.sh \
             scripts/test-rewrite-oci-config-paths.sh \
             scripts/test-schema-deployment-wrapper.sh \
+            scripts/force-sync-remote.sh \
+            scripts/test-force-sync-remote.sh \
             sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh \
             sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh
           bash scripts/test-rewrite-oci-config-paths.sh
           bash scripts/test-schema-deployment-wrapper.sh
+          bash scripts/test-force-sync-remote.sh
 
       - name: Validate PowerShell Windows authentication launchers
         shell: pwsh

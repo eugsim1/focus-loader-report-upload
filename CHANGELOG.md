@@ -1,5 +1,16 @@
 # Changelog
 
+## 26.13.1-force-remote-sync
+
+- Added `scripts/force-sync-remote.sh` to recover from blocked pulls by fetching
+  `origin/main`, discarding all tracked local modifications, staged changes, and
+  unpushed commits, and resetting the checkout exactly to the remote commit.
+- Preserved untracked and ignored files by default so local settings, wallets,
+  credentials, and generated reports are not deleted by the recovery action.
+- Added explicit destructive-action confirmation, a non-interactive `--yes`
+  option, remote/branch validation, detached/wrong-branch protection, and a
+  functional Git regression test.
+
 ## 26.13.0-schema-deployment-diagnostics
 
 - Changed the Streamlit schema-deployment backend to execute only

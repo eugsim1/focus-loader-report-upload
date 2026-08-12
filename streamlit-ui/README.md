@@ -158,7 +158,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.13.0-schema-deployment-diagnostics"
+  "version": "26.13.1-force-remote-sync"
 }
 ```
 
@@ -358,7 +358,7 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 ## 1. Build and install the updated Go backend
 
 The execution, cost, and schema-statistics tabs require the
-`26.13.0-schema-deployment-diagnostics` Go API and UI to be installed together.
+`26.13.1-force-remote-sync` Go API and UI to be installed together.
 
 ```bash
 cd /home/oracle/focus-loader-report-upload
@@ -374,7 +374,7 @@ dist/focus-loader-report-upload-linux-amd64 -version
 Expected version:
 
 ```text
-focus-loader-report-upload 26.13.0-schema-deployment-diagnostics
+focus-loader-report-upload 26.13.1-force-remote-sync
 ```
 
 ## 2. Verify TNS permissions
@@ -1035,7 +1035,7 @@ sudo grep '^FOCUS_API_URL' /etc/focus-loader/streamlit.env
 ```
 
 An older binary does not provide schema statistics; install the
-`26.13.0-schema-deployment-diagnostics` binary before using the current interface.
+`26.13.1-force-remote-sync` binary before using the current interface.
 
 ### The alias endpoint returns an error
 
@@ -1090,7 +1090,7 @@ sudo journalctl -u focus-loader-tns-gui.service -n 200 --no-pager
 ```
 
 An `ORA-01940` from an older installation means the target schema still has an
-active session. Version `26.13.0-schema-deployment-diagnostics` locks the user,
+active session. Version `26.13.1-force-remote-sync` locks the user,
 disconnects those sessions, and retries the drop. If it persists after upgrade,
 download the execution log and verify that the administrator can query
 `GV$SESSION` and run `ALTER SYSTEM DISCONNECT SESSION`.

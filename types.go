@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.13.0-schema-deployment-diagnostics"
+	version       = "26.13.1-force-remote-sync"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

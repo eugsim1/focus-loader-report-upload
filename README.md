@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.13.0-schema-deployment-diagnostics`
+Version `26.13.1-force-remote-sync`
 
 > **Independent project disclaimer**
 >
@@ -147,7 +147,7 @@ services are reached through SSH/OCI Bastion or an authenticated TLS reverse
 proxy.
 
 Quick deployment after installing the
-`26.13.0-schema-deployment-diagnostics` Go binary:
+`26.13.1-force-remote-sync` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip
@@ -163,6 +163,24 @@ Streamlit distribution** runbook in
 It includes safe `git pull`, configuration backup, CGO rebuild/tests, executable
 permissions, wallet and OCI preflight, both systemd backends, persistent SELinux
 labels for avoiding `203/EXEC`, health checks, logs, and rollback preparation.
+
+If `git pull` is blocked by tracked local modifications and the remote version
+must replace all of them, run this from the repository. It preserves untracked
+and ignored files:
+
+```bash
+./scripts/force-sync-remote.sh
+```
+
+Type `OVERWRITE` at the prompt. For an already-approved non-interactive reset:
+
+```bash
+./scripts/force-sync-remote.sh --yes
+```
+
+This is destructive for tracked files, staged changes, and unpushed local
+commits. It fetches and resets to `origin/main`; a subsequent `git pull` reports
+that the checkout is already current.
 
 From a Windows workstation, use the included OCI Bastion launcher with the
 existing Bastion and Compute OCIDs:
