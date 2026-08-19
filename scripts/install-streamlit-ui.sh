@@ -117,6 +117,10 @@ install -o root -g "${FOCUSLOADER_GROUP}" -m 0750 \
   "${SOURCE_DIR}/sql_scripts/run_deploy_focus_schema_with_sqlloader_audit.sh" \
   "${SOURCE_DIR}/sql_scripts/deploy_focus_schema_with_sqlloader_audit.sh" \
   "${APP_DIR}/sql_scripts/"
+install -o root -g "${FOCUSLOADER_GROUP}" -m 0640 \
+  "${SOURCE_DIR}/sql_scripts/install_finops_oml.sql" \
+  "${SOURCE_DIR}/sql_scripts/uninstall_finops_oml.sql" \
+  "${APP_DIR}/sql_scripts/"
 if [[ ! -e "${APP_DIR}/sql_scripts/focus.conf" ]]; then
   install -o "${FOCUSLOADER_USER}" -g "${FOCUSLOADER_GROUP}" -m 0640 \
     "${SOURCE_DIR}/sql_scripts/focus.conf" "${APP_DIR}/sql_scripts/focus.conf"

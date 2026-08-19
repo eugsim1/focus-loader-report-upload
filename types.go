@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	version       = "26.16.0-persistent-loader-history"
+	version       = "26.17.0-finops-oml"
 	workReportDir = "work_report_dir"
 	tagBatchSize  = 5000
 )

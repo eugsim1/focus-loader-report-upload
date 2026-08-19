@@ -125,6 +125,146 @@ class FocusAPIClientTests(unittest.TestCase):
         )
         self.assertNotIn("test-secret", request.full_url)
 
+    def test_finops_analytics_parses_cost_anomaly_and_forecast_results(self):
+        opener = RecordingOpener(
+            {
+                "connectAlias": "FOCUS_HIGH",
+                "username": "ADMIN",
+                "schema": "FOCUS_APP",
+                "tableName": "TEMP_OCI_FOCUS",
+                "tableExists": True,
+                "lastLoadedDate": "2026-08-11T18:30:00",
+                "lastChargeDate": "2026-08-10",
+                "yearToDateStart": "2026-01-01",
+                "monthlyCosts": [
+                    {
+                        "month": "2026-08",
+                        "billingCurrency": "EUR",
+                        "effectiveCost": "42.75",
+                    }
+                ],
+                "yearToDateCosts": [
+                    {"billingCurrency": "EUR", "effectiveCost": "142.75"}
+                ],
+                "anomalies": [
+                    {
+                        "dimensionType": "CREATEDBY",
+                        "dimensionValue": "finops@example.test",
+                        "month": "2026-07",
+                        "billingCurrency": "EUR",
+                        "effectiveCost": "90.25",
+                        "anomalyProbability": "0.91",
+                        "prediction": 0,
+                    }
+                ],
+                "forecasts": [
+                    {
+                        "createdBy": "finops@example.test",
+                        "billingCurrency": "EUR",
+                        "month": "2026-09",
+                        "horizonMonths": 1,
+                        "prediction": "48.0",
+                        "lowerBound": "40.0",
+                        "upperBound": "56.0",
+                    },
+                    {
+                        "createdBy": "finops@example.test",
+                        "billingCurrency": "EUR",
+                        "month": "2026-11",
+                        "horizonMonths": 3,
+                        "prediction": "53.0",
+                        "lowerBound": "42.0",
+                        "upperBound": "64.0",
+                    },
+                ],
+                "mostExpensiveUser": "finops@example.test",
+                "mostExpensiveCost": "142.75",
+                "mostExpensiveCurrency": "EUR",
+                "oml": {
+                    "installed": True,
+                    "refreshed": True,
+                    "lastRunAtUtc": "2026-08-11T18:31:00Z",
+                    "status": "SUCCEEDED",
+                    "message": "Created anomaly and forecast models.",
+                    "models": ["FOCUS_OML_CREATEDBY", "FOCUS_OML_USER_ESM"],
+                },
+                "queriedAtUtc": "2026-08-11T18:31:00Z",
+            }
+        )
+        result = FocusAPIClient(
+            "http://127.0.0.1:8080", opener=opener
+        ).finops_analytics(
+            "ADMIN",
+            "test-secret",
+            "FOCUS_APP",
+            refresh_oml=True,
+            confirm_oml_refresh=True,
+            outlier_rate=0.075,
+        )
+        self.assertEqual(result.year_to_date_costs[0].effective_cost, "142.75")
+        self.assertEqual(result.anomalies[0].dimension_type, "CREATEDBY")
+        self.assertEqual(result.forecasts[1].horizon_months, 3)
+        self.assertTrue(result.oml.refreshed)
+        request = opener.requests[0]
+        self.assertEqual(
+            request.full_url, "http://127.0.0.1:8080/api/v1/analytics/finops"
+        )
+        self.assertEqual(
+            json.loads(request.data.decode("utf-8")),
+            {
+                "username": "ADMIN",
+                "password": "test-secret",
+                "schema": "FOCUS_APP",
+                "refreshOml": True,
+                "confirmOmlRefresh": True,
+                "outlierRate": 0.075,
+            },
+        )
+
+    def test_finops_analytics_rejects_invalid_probability(self):
+        opener = RecordingOpener(
+            {
+                "connectAlias": "FOCUS_HIGH",
+                "username": "ADMIN",
+                "schema": "FOCUS_APP",
+                "tableName": "TEMP_OCI_FOCUS",
+                "tableExists": True,
+                "lastLoadedDate": "",
+                "lastChargeDate": "",
+                "yearToDateStart": "",
+                "monthlyCosts": [],
+                "yearToDateCosts": [],
+                "anomalies": [
+                    {
+                        "dimensionType": "TOTAL",
+                        "dimensionValue": "(all costs)",
+                        "month": "2026-07",
+                        "billingCurrency": "EUR",
+                        "effectiveCost": "90.25",
+                        "anomalyProbability": "1.25",
+                        "prediction": 0,
+                    }
+                ],
+                "forecasts": [],
+                "mostExpensiveUser": "",
+                "mostExpensiveCost": "",
+                "mostExpensiveCurrency": "",
+                "oml": {
+                    "installed": True,
+                    "refreshed": False,
+                    "lastRunAtUtc": "",
+                    "status": "SUCCEEDED",
+                    "message": "",
+                    "models": [],
+                },
+                "queriedAtUtc": "2026-08-11T18:31:00Z",
+            }
+        )
+        with self.assertRaisesRegex(FocusAPIError, "out-of-range"):
+            FocusAPIClient(
+                "http://127.0.0.1:8080", opener=opener
+            ).finops_analytics("ADMIN", "test-secret", "FOCUS_APP")
+
     def test_schema_deployment_posts_token_and_password_and_parses_result(self):
         opener = RecordingOpener(
             {

@@ -1,6 +1,6 @@
 # OCI FOCUS Loader and Transformed-CSV Uploader
 
-Version `26.16.0-persistent-loader-history`
+Version `26.17.0-finops-oml`
 
 > **Independent project disclaimer**
 >
@@ -14,6 +14,7 @@ This Go application retrieves OCI FOCUS cost reports from Object Storage, transf
 - generate pre-load detail, summary, and capacity-planning reports;
 - display the first `$TNS_ADMIN/tnsnames.ora` alias in a lightweight, read-only browser interface;
 - provide an optional modular Streamlit interface for first-alias database table discovery, gated fixed-script schema deployment, alias selection, diagnostics, and validated command generation;
+- plot monthly and year-to-date effective cost and optionally use OML4SQL for cost, service, region, and `CreatedBy` anomaly detection plus top-user forecasting;
 - run incrementally from cron with durable load and upload checkpoints.
 
 An [Ansible project](ansible/README.md) is included to build the Linux binary,
@@ -130,6 +131,12 @@ Current interactions include:
 - a Schema stats tab that checks a selected schema's fixed `TEMP_OCI_FOCUS`
   table and reports whether it exists/has data, total rows, latest `LOAD_DATE`,
   and current-month `EFFECTIVE_COST` by billing currency.
+- a FinOps OML tab that plots monthly cost, reports cost from 1 January through
+  the last loaded date, shows one-class SVM anomalies for total cost, services,
+  regions, and the `CreatedBy` tag, and plots six OML exponential-smoothing
+  forecast steps for the most expensive tagged user. OML is optional and its
+  rebuild requires a separate confirmation; see
+  [the complete OML setup and rollback guide](docs/FINOPS_OML.md).
 - a Reset interface button that clears browser-side forms and results without
   terminating an already-running backend loader process.
 
@@ -152,7 +159,7 @@ services are reached through SSH/OCI Bastion or an authenticated TLS reverse
 proxy.
 
 Quick deployment after installing the
-`26.16.0-persistent-loader-history` Go binary:
+`26.17.0-finops-oml` Go binary:
 
 ```bash
 sudo dnf install -y python3.11 python3.11-pip
@@ -161,6 +168,352 @@ sudo TNS_ADMIN=/opt/oracle/wallet PYTHON_BIN=python3.11 \
   ./scripts/install-streamlit-ui.sh
 ./scripts/test-streamlit-ui.sh
 ```
+
+## FinOps OML utilization examples
+
+These examples assume:
+
+- the application schema is `FOCUS_APP`;
+- the first entry in `$TNS_ADMIN/tnsnames.ora` is `FOCUS_HIGH`;
+- `TEMP_OCI_FOCUS` has already been populated by the loader;
+- the Go backends listen only on `127.0.0.1:8080` and `127.0.0.1:8081`;
+- Streamlit listens only on `127.0.0.1:8501` and is reached through the
+  existing SSH/OCI Bastion tunnel.
+
+Replace these example names with your own identifiers. Do not place database
+passwords, wallet files, OCI API keys, or real OCIDs in the repository.
+
+### Example 1: map the `CreatedBy` tag during data loading
+
+The user anomaly and forecast views expect the creator value in
+`TAG_SPECIAL1`, with `TAG_SPECIAL3` as a fallback. The normal loader mapping is:
+
+```text
+Tag special 1: Oracle-Tags.CreatedBy
+Tag special 3: Oracle_Tags.CreatedBy
+```
+
+The second spelling supports reports that use an underscore instead of a
+hyphen in the Oracle tag namespace. In the Streamlit **Command builder**, enter
+those values in `-ts1` and `-ts3`. A representative CLI fragment is:
+
+```bash
+./focus-loader-report-upload-linux-amd64 \
+  -du FOCUS_APP \
+  -dn FOCUS_HIGH \
+  -ts1 'Oracle-Tags.CreatedBy' \
+  -ts3 'Oracle_Tags.CreatedBy' \
+  -preload-report \
+  -continue-after-report
+```
+
+Supply the database credential with the project's protected password prompt or
+Vault mode; do not append a plaintext password to the example. After loading,
+verify that real users are available:
+
+```sql
+SELECT COALESCE(
+         NULLIF(TRIM(tag_special1), ''),
+         NULLIF(TRIM(tag_special3), ''),
+         '(unassigned)'
+       ) AS created_by,
+       COUNT(*) AS focus_rows,
+       SUM(NVL(effective_cost, 0)) AS effective_cost
+FROM temp_oci_focus
+GROUP BY COALESCE(
+           NULLIF(TRIM(tag_special1), ''),
+           NULLIF(TRIM(tag_special3), ''),
+           '(unassigned)'
+         )
+ORDER BY effective_cost DESC;
+```
+
+If your loader deliberately maps `CreatedBy` to `TAG_SPECIAL2` or
+`TAG_SPECIAL4`, update both `CreatedBy` expressions in
+`sql_scripts/install_finops_oml.sql` before installing the package.
+
+### Example 2: install OML in `FOCUS_APP`
+
+Connect as `ADMIN` or another authorized database administrator and grant the
+minimum mining privilege directly to the schema owner:
+
+```sql
+GRANT CREATE MINING MODEL TO FOCUS_APP;
+```
+
+Then connect as `FOCUS_APP`. SQLcl and SQL*Plus prompt for the omitted password:
+
+```bash
+export TNS_ADMIN=/opt/oracle/wallet
+sql -L FOCUS_APP@FOCUS_HIGH @sql_scripts/install_finops_oml.sql
+```
+
+Equivalent SQL*Plus command:
+
+```bash
+sqlplus -L FOCUS_APP@FOCUS_HIGH @sql_scripts/install_finops_oml.sql
+```
+
+The installation creates only `FOCUS_OML_*` views, result tables, and the
+`FOCUS_OML_ANALYTICS` package. It does not modify `TEMP_OCI_FOCUS` and does not
+build a model until a refresh is explicitly requested.
+
+If a separate login such as `FINOPS_READER` opens the Streamlit tab, grant only
+the objects it needs:
+
+```sql
+GRANT SELECT ON FOCUS_APP.TEMP_OCI_FOCUS TO FINOPS_READER;
+GRANT SELECT ON FOCUS_APP.FOCUS_OML_RUNS TO FINOPS_READER;
+GRANT SELECT ON FOCUS_APP.FOCUS_OML_ANOMALIES TO FINOPS_READER;
+GRANT SELECT ON FOCUS_APP.FOCUS_OML_FORECAST TO FINOPS_READER;
+GRANT SELECT ON FOCUS_APP.FOCUS_OML_TOP_USER TO FINOPS_READER;
+GRANT EXECUTE ON FOCUS_APP.FOCUS_OML_ANALYTICS TO FINOPS_READER;
+```
+
+Omit the final `EXECUTE` grant when the login must be strictly read-only.
+
+### Example 3: display monthly and year-to-date costs without rebuilding OML
+
+1. Open the existing tunnel to Streamlit and browse to
+   `http://127.0.0.1:8501`.
+2. Select the backend user that owns the correct wallet and TNS configuration.
+3. Open **FinOps OML**.
+4. Enter `FOCUS_APP` as the database user, or enter another authorized login
+   and clear **Analyze the login user's schema** to set the schema owner to
+   `FOCUS_APP`.
+5. Leave **Rebuild OML anomaly and forecast models** clear.
+6. Select **Load FinOps analytics**.
+
+This path is read-only. It displays:
+
+- one monthly `EFFECTIVE_COST` line for each billing currency;
+- the cost from 1 January through the calendar day of `MAX(LOAD_DATE)`;
+- the latest charge date and query time;
+- the most recently saved OML results, if models were previously refreshed.
+
+For example, if `MAX(LOAD_DATE)` is `2026-08-19 10:30:00`, the YTD query covers
+`2026-01-01 00:00:00` through the end of `2026-08-19`. It does not include a
+charge dated after that loaded day. EUR, USD, and other currencies are always
+shown separately and are never added together.
+
+Equivalent verification query:
+
+```sql
+WITH bounds AS (
+  SELECT TRUNC(COALESCE(MAX(load_date), MAX(charge_period_start))) AS as_of_date
+  FROM temp_oci_focus
+)
+SELECT NVL(TRIM(f.billing_currency), '(not provided)') AS billing_currency,
+       SUM(NVL(f.effective_cost, 0)) AS ytd_effective_cost
+FROM temp_oci_focus f
+CROSS JOIN bounds b
+WHERE f.charge_period_start >= TRUNC(b.as_of_date, 'YYYY')
+  AND f.charge_period_start < b.as_of_date + 1
+GROUP BY NVL(TRIM(f.billing_currency), '(not provided)')
+ORDER BY billing_currency;
+```
+
+### Example 4: rebuild and review the anomaly models
+
+In **FinOps OML**:
+
+1. Set **Expected OML outlier rate** to `0.050` for an expected five-percent
+   anomaly population.
+2. Select **Rebuild OML anomaly and forecast models**.
+3. Select **I confirm this OML refresh**.
+4. Select **Load FinOps analytics**.
+
+The accepted rate is `0.001` through `0.25`. The refresh creates independent
+one-class SVM models for:
+
+| UI selection | Source dimension | Example value |
+|---|---|---|
+| Total costs | All monthly costs | `(all costs)` |
+| Services | `SERVICE_NAME` | `Compute` |
+| Regions | `REGION_NAME`, then `REGION_ID` | `Germany Central (Frankfurt)` |
+| Users | `TAG_SPECIAL1`, then `TAG_SPECIAL3` | `user@example.test` |
+
+Each model uses monthly effective cost, prior cost, three-observation moving
+average, cost-change ratio, source-row count, month, and billing currency. A
+dimension needs at least 12 aggregated monthly records; otherwise its run
+message explains that it was skipped.
+
+Filter the result with **Anomaly dimension**. An anomaly probability near `1`
+means the OML model assigned a high probability to the anomalous class for that
+record; it is an investigation signal, not proof of incorrect billing.
+
+Review the same rows in SQL:
+
+```sql
+SELECT dimension_type,
+       dimension_value,
+       TO_CHAR(cost_month, 'YYYY-MM') AS cost_month,
+       billing_currency,
+       effective_cost,
+       anomaly_probability,
+       model_name
+FROM focus_oml_anomalies
+ORDER BY anomaly_probability DESC, cost_month DESC
+FETCH FIRST 50 ROWS ONLY;
+```
+
+Example: show only `CreatedBy` anomalies:
+
+```sql
+SELECT dimension_value AS created_by,
+       TO_CHAR(cost_month, 'YYYY-MM') AS cost_month,
+       billing_currency,
+       effective_cost,
+       anomaly_probability
+FROM focus_oml_anomalies
+WHERE dimension_type = 'CREATEDBY'
+ORDER BY anomaly_probability DESC;
+```
+
+### Example 5: read the 1-, 3-, and 6-month top-user forecast
+
+The refresh selects the real `CreatedBy` user/currency series with the largest
+numeric YTD `EFFECTIVE_COST`. `(unassigned)` is excluded. It fills missing
+historical months with zero and creates six Oracle exponential-smoothing
+forecast steps. At least six monthly observations are required.
+
+The UI displays all six points and highlights:
+
+- `+1 month`: the first month after the latest loaded cost month;
+- `+3 months`: the third forecast month;
+- `+6 months`: the sixth forecast month.
+
+It also plots lower and upper prediction bounds. If the latest loaded month is
+partial, that partial month is part of the input and can bias the forecast low;
+rerun after month-end before using it for planning.
+
+SQL verification:
+
+```sql
+SELECT created_by,
+       billing_currency,
+       TO_CHAR(forecast_month, 'YYYY-MM') AS forecast_month,
+       horizon_months,
+       prediction,
+       lower_bound,
+       upper_bound
+FROM focus_oml_forecast
+WHERE horizon_months IN (1, 3, 6)
+ORDER BY horizon_months;
+```
+
+The code never combines currencies. If the source table contains multiple
+currencies, it compares user/currency series by their numeric value without an
+exchange-rate conversion. Normalize currencies separately before making a
+cross-currency business decision.
+
+### Example 6: refresh and troubleshoot directly from SQL
+
+Use this when the five-minute UI request limit is insufficient or when the full
+Oracle error is needed:
+
+```sql
+BEGIN
+  FOCUS_OML_ANALYTICS.RUN(0.05);
+END;
+/
+```
+
+Review execution history:
+
+```sql
+SELECT run_id, run_at_utc, status, message, outlier_rate
+FROM focus_oml_runs
+ORDER BY run_id DESC
+FETCH FIRST 10 ROWS ONLY;
+```
+
+Review installed models and effective settings:
+
+```sql
+SELECT model_name, mining_function, algorithm
+FROM user_mining_models
+WHERE model_name LIKE 'FOCUS_OML_%'
+ORDER BY model_name;
+
+SELECT model_name, setting_name, setting_value
+FROM user_mining_model_settings
+WHERE model_name LIKE 'FOCUS_OML_%'
+ORDER BY model_name, setting_name;
+```
+
+Typical outcomes:
+
+- `ORA-01031`: grant `CREATE MINING MODEL` directly to `FOCUS_APP`.
+- `NOT_INSTALLED`: run `sql_scripts/install_finops_oml.sql` in the same schema
+  selected in Streamlit.
+- anomaly dimension skipped: load enough history to provide 12 aggregated
+  monthly records.
+- forecast missing: confirm a real `CreatedBy` value and at least six months of
+  history exist.
+
+### Example 7: call the fixed API safely for diagnostics
+
+Run this only on the Oracle Linux host or through a protected loopback tunnel.
+The helper prompts for the password without putting it in the shell history or
+Python command line, writes the request with mode `0600`, and removes it on
+exit:
+
+```bash
+request_file=$(mktemp)
+response_file=$(mktemp)
+chmod 0600 "${request_file}" "${response_file}"
+trap 'rm -f "${request_file}" "${response_file}"' EXIT
+
+python3 - "${request_file}" <<'PY'
+import getpass
+import json
+import sys
+
+request_path = sys.argv[1]
+payload = {
+    "username": "FOCUS_APP",
+    "password": getpass.getpass("Database password: "),
+    "schema": "FOCUS_APP",
+    "refreshOml": False,
+    "confirmOmlRefresh": False,
+    "outlierRate": 0.05,
+}
+with open(request_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+PY
+
+curl --fail --silent --show-error \
+  -H 'Content-Type: application/json' \
+  --data-binary "@${request_file}" \
+  http://127.0.0.1:8080/api/v1/analytics/finops \
+  > "${response_file}"
+
+jq '{lastLoadedDate, yearToDateCosts, oml, mostExpensiveUser, forecasts}' \
+  "${response_file}"
+```
+
+To request a rebuild through the API, change both `refreshOml` and
+`confirmOmlRefresh` to `True`. The backend rejects a refresh when confirmation
+is false and never accepts browser-supplied SQL, table names, package names, or
+model names.
+
+### Example 8: remove only the optional OML objects
+
+Connect as `FOCUS_APP` and run:
+
+```bash
+export TNS_ADMIN=/opt/oracle/wallet
+sql -L FOCUS_APP@FOCUS_HIGH @sql_scripts/uninstall_finops_oml.sql
+```
+
+This removes only the `FOCUS_OML_*` package, mining models, views, staging
+tables, and result tables. It preserves `TEMP_OCI_FOCUS`, loader checkpoints,
+and audit data. The Streamlit monthly and YTD charts continue working; the OML
+section returns to `NOT_INSTALLED`.
+
+For deeper architecture, security, deployment, and troubleshooting details,
+read [FinOps OML setup, operation, and rollback](docs/FINOPS_OML.md).
 
 For subsequent GitHub updates, follow the complete **Redeploy the latest
 Streamlit distribution** runbook in
@@ -265,6 +618,8 @@ cd /path/to/focus-loader-report-upload-source && ./linux-browser-auth-streamlit/
 - [Build and test](#build-and-test)
 - [Read-only TNS alias GUI](README_TNS_GUI.md)
 - [Complete Streamlit deployment guide](streamlit-ui/README.md)
+- [FinOps OML setup, operation, and rollback](docs/FINOPS_OML.md)
+- [FinOps OML utilization examples](#finops-oml-utilization-examples)
 - [Windows browser-authentication tunnel](windows-browser-auth-streamlit/README.md)
 - [Windows API-key-authentication tunnel](windows-api-key-auth-streamlit/README.md)
 - [Linux browser-authentication tunnel](linux-browser-auth-streamlit/README.md)

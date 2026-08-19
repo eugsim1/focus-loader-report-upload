@@ -8,6 +8,7 @@ import os
 import re
 from datetime import datetime, timezone
 
+import pandas as pd
 import streamlit as st
 
 from command_builder import (
@@ -22,6 +23,7 @@ from focus_api import (
     AliasCatalog,
     DatabaseTable,
     DatabaseTables,
+    FinopsAnalytics,
     FocusAPIClient,
     FocusAPIError,
     Health,
@@ -606,6 +608,8 @@ def clear_execution_user_context() -> None:
         "schema_deployment_result",
         "schema_stats_result",
         "schema_stats_error",
+        "finops_analytics_result",
+        "finops_analytics_error",
         "loader_command",
         "loader_script",
         "loader_execution_config",
@@ -1166,6 +1170,313 @@ def render_cost_analytics(api_url: str) -> None:
     )
 
 
+def render_finops_oml(api_url: str, catalog: AliasCatalog) -> None:
+    st.subheader("FinOps cost and OML analytics")
+    st.caption(
+        "Reads the fixed TEMP_OCI_FOCUS table through the first TNS alias. "
+        "Monthly and year-to-date costs are always read-only. An explicitly "
+        "confirmed refresh rebuilds the installed OML4SQL models and commits "
+        "their anomaly and forecast output tables."
+    )
+
+    database_user = st.text_input(
+        "FinOps database user",
+        value="ADMIN",
+        key="finops_database_user",
+        help=(
+            "Use the FOCUS schema login or another user with SELECT access. "
+            "Refreshing OML additionally requires EXECUTE on the installed package."
+        ),
+    ).strip()
+    use_login_schema = st.checkbox(
+        "Analyze the login user's schema",
+        value=True,
+        key="finops_use_login_schema",
+    )
+    if use_login_schema:
+        schema_owner = database_user.upper()
+        st.caption("FOCUS schema owner")
+        st.code(schema_owner or "Enter a database user", language=None)
+    else:
+        schema_owner = st.text_input(
+            "FOCUS schema owner",
+            value="FOCUS_APP",
+            key="finops_schema_owner",
+            help="The schema containing TEMP_OCI_FOCUS and the optional OML package.",
+        ).strip().upper()
+
+    with st.form("finops-analytics", clear_on_submit=True):
+        database_password = st.text_input(
+            "FinOps database password",
+            type="password",
+            help="Used only for this request and never stored by Streamlit.",
+        )
+        outlier_rate = st.number_input(
+            "Expected OML outlier rate",
+            min_value=0.001,
+            max_value=0.250,
+            value=0.050,
+            step=0.005,
+            format="%.3f",
+            help=(
+                "Expected fraction of monthly dimension records treated as outliers "
+                "by each one-class SVM model."
+            ),
+        )
+        refresh_oml = st.checkbox(
+            "Rebuild OML anomaly and forecast models",
+            value=False,
+            help=(
+                "Drops/recreates only the FOCUS_OML_* mining models and replaces "
+                "the installed package's derived result rows."
+            ),
+        )
+        confirm_oml_refresh = st.checkbox(
+            "I confirm this OML refresh",
+            value=False,
+            help="Required only when the rebuild checkbox is selected.",
+        )
+        submitted = st.form_submit_button("Load FinOps analytics", type="primary")
+
+    if submitted:
+        st.session_state.pop("finops_analytics_result", None)
+        st.session_state.pop("finops_analytics_error", None)
+        if not database_user:
+            st.session_state["finops_analytics_error"] = "Database user is required."
+        elif not schema_owner:
+            st.session_state["finops_analytics_error"] = "Schema owner is required."
+        elif not ORACLE_IDENTIFIER.fullmatch(database_user):
+            st.session_state["finops_analytics_error"] = (
+                "Database user must be an unquoted Oracle identifier."
+            )
+        elif not ORACLE_IDENTIFIER.fullmatch(schema_owner):
+            st.session_state["finops_analytics_error"] = (
+                "Schema owner must be an unquoted Oracle identifier."
+            )
+        elif not database_password:
+            st.session_state["finops_analytics_error"] = "Database password is required."
+        elif refresh_oml and not confirm_oml_refresh:
+            st.session_state["finops_analytics_error"] = (
+                "Select the OML refresh confirmation checkbox first."
+            )
+        else:
+            action = "Refreshing OML and loading" if refresh_oml else "Loading"
+            try:
+                with st.spinner(
+                    f"{action} {schema_owner}.TEMP_OCI_FOCUS analytics through "
+                    f"{catalog.first_alias}..."
+                ):
+                    result = FocusAPIClient(
+                        api_url, timeout_seconds=310.0
+                    ).finops_analytics(
+                        database_user,
+                        database_password,
+                        schema_owner,
+                        refresh_oml=refresh_oml,
+                        confirm_oml_refresh=confirm_oml_refresh,
+                        outlier_rate=float(outlier_rate),
+                    )
+                st.session_state["finops_analytics_result"] = result
+            except FocusAPIError as error:
+                st.session_state["finops_analytics_error"] = str(error)
+
+    if error := st.session_state.get("finops_analytics_error"):
+        st.error(error)
+
+    result = st.session_state.get("finops_analytics_result")
+    if not isinstance(result, FinopsAnalytics):
+        return
+
+    if not result.table_exists:
+        st.warning(f"{result.schema}.{result.table_name} does not exist or is not visible.")
+        return
+
+    loaded_column, charged_column, queried_column = st.columns(3)
+    loaded_column.metric("Last loaded date", result.last_loaded_date or "No LOAD_DATE")
+    charged_column.metric("Latest charge date", result.last_charge_date or "No charge date")
+    queried_column.metric("Queried at (UTC)", result.queried_at_utc)
+    st.caption(
+        f"Schema {result.schema}; login {result.username}; alias {result.connect_alias}. "
+        "Each billing currency is intentionally kept separate."
+    )
+
+    st.markdown("#### Cost from the beginning of the year through the last loaded date")
+    if result.year_to_date_costs:
+        metric_columns = st.columns(min(len(result.year_to_date_costs), 4))
+        for index, cost in enumerate(result.year_to_date_costs):
+            metric_columns[index % len(metric_columns)].metric(
+                f"YTD effective cost ({cost.billing_currency})",
+                f"{float(cost.effective_cost):,.2f}",
+            )
+        st.caption(
+            f"Window starts {result.year_to_date_start} and ends on "
+            f"{result.last_loaded_date or result.last_charge_date}."
+        )
+    else:
+        st.info("No year-to-date CHARGE_PERIOD_START rows are available.")
+
+    st.markdown("#### Effective cost per month")
+    if result.monthly_costs:
+        monthly_frame = pd.DataFrame(
+            [
+                {
+                    "Month": pd.to_datetime(cost.month, format="%Y-%m"),
+                    "Billing currency": cost.billing_currency,
+                    "Effective cost": float(cost.effective_cost),
+                }
+                for cost in result.monthly_costs
+            ]
+        )
+        monthly_plot = monthly_frame.pivot(
+            index="Month", columns="Billing currency", values="Effective cost"
+        ).sort_index()
+        st.line_chart(monthly_plot, use_container_width=True)
+        st.dataframe(
+            monthly_frame.assign(Month=monthly_frame["Month"].dt.strftime("%Y-%m")),
+            hide_index=True,
+            use_container_width=True,
+        )
+    else:
+        st.info("No monthly effective-cost data is available.")
+
+    st.markdown("#### OML anomaly detection")
+    if not result.oml.installed:
+        st.warning(result.oml.message)
+        st.code(
+            "sql -L FOCUS_SCHEMA@FIRST_TNS_ALIAS "
+            "@sql_scripts/install_finops_oml.sql",
+            language="bash",
+        )
+    else:
+        status_columns = st.columns(3)
+        status_columns[0].metric("OML status", result.oml.status or "Not run")
+        status_columns[1].metric("Detected anomalies", len(result.anomalies))
+        status_columns[2].metric("Mining models", len(result.oml.models))
+        if result.oml.refreshed:
+            st.success("OML models and derived results were refreshed for this request.")
+        if result.oml.message:
+            st.caption(result.oml.message)
+        if result.oml.last_run_at_utc:
+            st.caption(f"Last OML run: {result.oml.last_run_at_utc}")
+        if result.oml.models:
+            with st.expander("Installed FOCUS OML models"):
+                st.code("\n".join(result.oml.models), language=None)
+
+        if result.anomalies:
+            dimension = st.selectbox(
+                "Anomaly dimension",
+                options=["TOTAL", "SERVICE", "REGION", "CREATEDBY"],
+                format_func=lambda value: {
+                    "TOTAL": "Total costs",
+                    "SERVICE": "Services",
+                    "REGION": "Regions",
+                    "CREATEDBY": "Users (tag CreatedBy)",
+                }[value],
+                key="finops_anomaly_dimension",
+            )
+            selected_anomalies = [
+                anomaly
+                for anomaly in result.anomalies
+                if anomaly.dimension_type == dimension
+            ]
+            if selected_anomalies:
+                anomaly_frame = pd.DataFrame(
+                    [
+                        {
+                            "Month": anomaly.month,
+                            "Dimension value": anomaly.dimension_value,
+                            "Billing currency": anomaly.billing_currency,
+                            "Effective cost": float(anomaly.effective_cost),
+                            "Anomaly probability": float(anomaly.anomaly_probability),
+                        }
+                        for anomaly in selected_anomalies
+                    ]
+                )
+                st.scatter_chart(
+                    anomaly_frame,
+                    x="Month",
+                    y="Effective cost",
+                    color="Dimension value",
+                    size="Anomaly probability",
+                    use_container_width=True,
+                )
+                st.dataframe(
+                    anomaly_frame.sort_values(
+                        "Anomaly probability", ascending=False
+                    ),
+                    hide_index=True,
+                    use_container_width=True,
+                )
+            else:
+                st.info(f"No {dimension.lower()} anomalies were detected.")
+        elif result.oml.status:
+            st.info("The last successful OML run did not identify any anomaly rows.")
+
+    st.markdown("#### OML forecast for the most expensive CreatedBy user")
+    st.caption(
+        "The user is selected from year-to-date EFFECTIVE_COST. Currency is part of "
+        "the selection; values in different currencies are never added together."
+    )
+    if result.forecasts:
+        st.metric(
+            f"Most expensive user ({result.most_expensive_currency})",
+            result.most_expensive_user,
+            help=(
+                "YTD effective cost: "
+                f"{float(result.most_expensive_cost):,.2f} "
+                f"{result.most_expensive_currency}"
+            ),
+        )
+        forecast_by_horizon = {
+            forecast.horizon_months: forecast for forecast in result.forecasts
+        }
+        horizon_columns = st.columns(3)
+        for column, horizon in zip(horizon_columns, (1, 3, 6)):
+            forecast = forecast_by_horizon.get(horizon)
+            column.metric(
+                f"Forecast +{horizon} month{'s' if horizon > 1 else ''}",
+                (
+                    f"{float(forecast.prediction):,.2f} "
+                    f"{forecast.billing_currency}"
+                    if forecast
+                    else "Unavailable"
+                ),
+            )
+        forecast_frame = pd.DataFrame(
+            [
+                {
+                    "Month": pd.to_datetime(forecast.month, format="%Y-%m"),
+                    "Prediction": float(forecast.prediction),
+                    "Lower bound": float(forecast.lower_bound),
+                    "Upper bound": float(forecast.upper_bound),
+                    "Horizon (months)": forecast.horizon_months,
+                }
+                for forecast in result.forecasts
+            ]
+        ).sort_values("Month")
+        st.line_chart(
+            forecast_frame.set_index("Month")[
+                ["Prediction", "Lower bound", "Upper bound"]
+            ],
+            use_container_width=True,
+        )
+        st.dataframe(
+            forecast_frame.assign(Month=forecast_frame["Month"].dt.strftime("%Y-%m")),
+            hide_index=True,
+            use_container_width=True,
+        )
+    elif result.oml.installed and result.oml.status:
+        st.info(
+            "No forecast was generated. At least six monthly observations are "
+            "required for the selected CreatedBy user and currency."
+        )
+
+    if st.button("Clear FinOps analytics result"):
+        st.session_state.pop("finops_analytics_result", None)
+        st.session_state.pop("finops_analytics_error", None)
+        st.rerun()
+
+
 def render_diagnostics(
     api_url: str,
     health: Health,
@@ -1278,6 +1589,7 @@ def main() -> None:
             "Execute loader",
             "Schema stats",
             "Cost analytics",
+            "FinOps OML",
             "Diagnostics",
         ]
     )
@@ -1305,6 +1617,9 @@ def main() -> None:
     tab_index += 1
     with tabs[tab_index]:
         render_cost_analytics(api_url)
+    tab_index += 1
+    with tabs[tab_index]:
+        render_finops_oml(api_url, catalog)
     tab_index += 1
     with tabs[tab_index]:
         render_diagnostics(

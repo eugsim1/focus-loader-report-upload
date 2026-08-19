@@ -88,6 +88,65 @@ class SchemaStatistics:
 
 
 @dataclass(frozen=True)
+class YearToDateCost:
+    billing_currency: str
+    effective_cost: str
+
+
+@dataclass(frozen=True)
+class FinopsAnomaly:
+    dimension_type: str
+    dimension_value: str
+    month: str
+    billing_currency: str
+    effective_cost: str
+    anomaly_probability: str
+    prediction: int
+
+
+@dataclass(frozen=True)
+class FinopsForecast:
+    created_by: str
+    billing_currency: str
+    month: str
+    horizon_months: int
+    prediction: str
+    lower_bound: str
+    upper_bound: str
+
+
+@dataclass(frozen=True)
+class FinopsOMLStatus:
+    installed: bool
+    refreshed: bool
+    last_run_at_utc: str
+    status: str
+    message: str
+    models: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FinopsAnalytics:
+    connect_alias: str
+    username: str
+    schema: str
+    table_name: str
+    table_exists: bool
+    last_loaded_date: str
+    last_charge_date: str
+    year_to_date_start: str
+    monthly_costs: tuple[MonthlyEffectiveCost, ...]
+    year_to_date_costs: tuple[YearToDateCost, ...]
+    anomalies: tuple[FinopsAnomaly, ...]
+    forecasts: tuple[FinopsForecast, ...]
+    most_expensive_user: str
+    most_expensive_cost: str
+    most_expensive_currency: str
+    oml: FinopsOMLStatus
+    queried_at_utc: str
+
+
+@dataclass(frozen=True)
 class LoaderJob:
     job_id: str
     status: str
@@ -272,6 +331,88 @@ class FocusAPIClient:
             last_load_date=self._string(payload, "lastLoadDate"),
             current_month=current_month,
             current_month_costs=costs,
+            queried_at_utc=self._required_string(payload, "queriedAtUtc"),
+        )
+
+    def finops_analytics(
+        self,
+        username: str,
+        password: str,
+        schema: str,
+        *,
+        refresh_oml: bool = False,
+        confirm_oml_refresh: bool = False,
+        outlier_rate: float = 0.05,
+    ) -> FinopsAnalytics:
+        payload = self._request_json(
+            "/api/v1/analytics/finops",
+            method="POST",
+            body={
+                "username": username,
+                "password": password,
+                "schema": schema,
+                "refreshOml": refresh_oml,
+                "confirmOmlRefresh": confirm_oml_refresh,
+                "outlierRate": outlier_rate,
+            },
+            timeout_seconds=max(self.timeout_seconds, 310.0),
+        )
+        monthly_costs = self._monthly_costs(payload, "monthlyCosts")
+        year_to_date_costs = self._year_to_date_costs(payload)
+        anomalies = self._finops_anomalies(payload)
+        forecasts = self._finops_forecasts(payload)
+        raw_oml = payload.get("oml")
+        if not isinstance(raw_oml, dict):
+            raise FocusAPIError("The Go API returned an invalid OML status.")
+        oml = FinopsOMLStatus(
+            installed=self._required_bool(raw_oml, "installed"),
+            refreshed=self._required_bool(raw_oml, "refreshed"),
+            last_run_at_utc=self._string(raw_oml, "lastRunAtUtc"),
+            status=self._string(raw_oml, "status"),
+            message=self._string(raw_oml, "message"),
+            models=self._string_tuple(raw_oml, "models"),
+        )
+        most_expensive_user = self._string(payload, "mostExpensiveUser")
+        most_expensive_cost = self._string(payload, "mostExpensiveCost")
+        most_expensive_currency = self._string(
+            payload, "mostExpensiveCurrency"
+        )
+        if most_expensive_cost:
+            self._finite_decimal(most_expensive_cost, "most-expensive-user cost")
+        if forecasts:
+            if not (
+                most_expensive_user
+                and most_expensive_cost
+                and most_expensive_currency
+            ):
+                raise FocusAPIError(
+                    "The Go API omitted the most-expensive-user forecast context."
+                )
+            if any(
+                forecast.created_by != most_expensive_user
+                or forecast.billing_currency != most_expensive_currency
+                for forecast in forecasts
+            ):
+                raise FocusAPIError(
+                    "The Go API returned inconsistent forecast user/currency context."
+                )
+        return FinopsAnalytics(
+            connect_alias=self._required_string(payload, "connectAlias"),
+            username=self._required_string(payload, "username"),
+            schema=self._required_string(payload, "schema"),
+            table_name=self._required_string(payload, "tableName"),
+            table_exists=self._required_bool(payload, "tableExists"),
+            last_loaded_date=self._string(payload, "lastLoadedDate"),
+            last_charge_date=self._string(payload, "lastChargeDate"),
+            year_to_date_start=self._string(payload, "yearToDateStart"),
+            monthly_costs=monthly_costs,
+            year_to_date_costs=year_to_date_costs,
+            anomalies=anomalies,
+            forecasts=forecasts,
+            most_expensive_user=most_expensive_user,
+            most_expensive_cost=most_expensive_cost,
+            most_expensive_currency=most_expensive_currency,
+            oml=oml,
             queried_at_utc=self._required_string(payload, "queriedAtUtc"),
         )
 
@@ -513,6 +654,132 @@ class FocusAPIClient:
                 )
             )
         return tuple(monthly_costs)
+
+    def _year_to_date_costs(
+        self, payload: Mapping[str, Any]
+    ) -> tuple[YearToDateCost, ...]:
+        raw_costs = payload.get("yearToDateCosts", [])
+        if not isinstance(raw_costs, list):
+            raise FocusAPIError("The Go API returned an invalid year-to-date cost list.")
+        costs: list[YearToDateCost] = []
+        for raw_cost in raw_costs:
+            if not isinstance(raw_cost, dict):
+                raise FocusAPIError("The Go API returned an invalid year-to-date cost entry.")
+            value = self._required_string(raw_cost, "effectiveCost")
+            self._finite_decimal(value, "year-to-date effective cost")
+            costs.append(
+                YearToDateCost(
+                    billing_currency=self._required_string(
+                        raw_cost, "billingCurrency"
+                    ),
+                    effective_cost=value,
+                )
+            )
+        return tuple(costs)
+
+    def _finops_anomalies(
+        self, payload: Mapping[str, Any]
+    ) -> tuple[FinopsAnomaly, ...]:
+        raw_anomalies = payload.get("anomalies", [])
+        if not isinstance(raw_anomalies, list):
+            raise FocusAPIError("The Go API returned an invalid OML anomaly list.")
+        anomalies: list[FinopsAnomaly] = []
+        for raw_anomaly in raw_anomalies:
+            if not isinstance(raw_anomaly, dict):
+                raise FocusAPIError("The Go API returned an invalid OML anomaly entry.")
+            dimension_type = self._required_string(raw_anomaly, "dimensionType")
+            if dimension_type not in {"TOTAL", "SERVICE", "REGION", "CREATEDBY"}:
+                raise FocusAPIError("The Go API returned an invalid OML anomaly dimension.")
+            month = self._required_month(raw_anomaly, "month")
+            effective_cost = self._required_string(raw_anomaly, "effectiveCost")
+            probability = self._required_string(raw_anomaly, "anomalyProbability")
+            self._finite_decimal(effective_cost, "anomaly effective cost")
+            parsed_probability = self._finite_decimal(
+                probability, "anomaly probability"
+            )
+            if parsed_probability < 0 or parsed_probability > 1:
+                raise FocusAPIError("The Go API returned an out-of-range anomaly probability.")
+            prediction = self._required_int(raw_anomaly, "prediction")
+            if prediction not in {0, 1}:
+                raise FocusAPIError("The Go API returned an invalid anomaly prediction.")
+            anomalies.append(
+                FinopsAnomaly(
+                    dimension_type=dimension_type,
+                    dimension_value=self._required_string(
+                        raw_anomaly, "dimensionValue"
+                    ),
+                    month=month,
+                    billing_currency=self._required_string(
+                        raw_anomaly, "billingCurrency"
+                    ),
+                    effective_cost=effective_cost,
+                    anomaly_probability=probability,
+                    prediction=prediction,
+                )
+            )
+        return tuple(anomalies)
+
+    def _finops_forecasts(
+        self, payload: Mapping[str, Any]
+    ) -> tuple[FinopsForecast, ...]:
+        raw_forecasts = payload.get("forecasts", [])
+        if not isinstance(raw_forecasts, list):
+            raise FocusAPIError("The Go API returned an invalid OML forecast list.")
+        forecasts: list[FinopsForecast] = []
+        for raw_forecast in raw_forecasts:
+            if not isinstance(raw_forecast, dict):
+                raise FocusAPIError("The Go API returned an invalid OML forecast entry.")
+            horizon = self._required_int(raw_forecast, "horizonMonths")
+            if not 1 <= horizon <= 6:
+                raise FocusAPIError("The Go API returned an invalid forecast horizon.")
+            prediction = self._required_string(raw_forecast, "prediction")
+            lower = self._required_string(raw_forecast, "lowerBound")
+            upper = self._required_string(raw_forecast, "upperBound")
+            prediction_value = self._finite_decimal(prediction, "forecast prediction")
+            lower_value = self._finite_decimal(lower, "forecast lower bound")
+            upper_value = self._finite_decimal(upper, "forecast upper bound")
+            if lower_value > prediction_value or prediction_value > upper_value:
+                raise FocusAPIError("The Go API returned inconsistent forecast bounds.")
+            forecasts.append(
+                FinopsForecast(
+                    created_by=self._required_string(raw_forecast, "createdBy"),
+                    billing_currency=self._required_string(
+                        raw_forecast, "billingCurrency"
+                    ),
+                    month=self._required_month(raw_forecast, "month"),
+                    horizon_months=horizon,
+                    prediction=prediction,
+                    lower_bound=lower,
+                    upper_bound=upper,
+                )
+            )
+        if [forecast.horizon_months for forecast in forecasts] != sorted(
+            forecast.horizon_months for forecast in forecasts
+        ):
+            raise FocusAPIError("The Go API returned unsorted forecast horizons.")
+        return tuple(forecasts)
+
+    def _required_month(self, payload: Mapping[str, Any], name: str) -> str:
+        month = self._required_string(payload, name)
+        if (
+            len(month) != 7
+            or month[4] != "-"
+            or not month[:4].isdigit()
+            or not month[5:].isdigit()
+            or not 1 <= int(month[5:]) <= 12
+        ):
+            raise FocusAPIError(f"The Go API returned an invalid {name}.")
+        return month
+
+    @staticmethod
+    def _finite_decimal(value: str, label: str) -> Decimal:
+        try:
+            parsed = Decimal(value)
+        except InvalidOperation as error:
+            raise FocusAPIError(f"The Go API returned an invalid {label}.") from error
+        if not parsed.is_finite():
+            raise FocusAPIError(f"The Go API returned a non-finite {label}.")
+        return parsed
 
     def _get_json(self, path: str) -> Mapping[str, Any]:
         return self._request_json(path, method="GET")

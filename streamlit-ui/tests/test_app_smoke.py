@@ -27,7 +27,7 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 if self.path == "/api/v1/health":
                     payload = {
                         "status": "ok",
-                        "version": "26.16.0-persistent-loader-history",
+                        "version": "26.17.0-finops-oml",
                     }
                 elif self.path == "/api/v1/tns/aliases":
                     payload = {
@@ -80,33 +80,117 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.wfile.write(body)
 
             def do_POST(self):
-                if self.path != "/api/v1/schema/stats":
+                if self.path not in {
+                    "/api/v1/schema/stats",
+                    "/api/v1/analytics/finops",
+                }:
                     self.send_error(404)
                     return
                 content_length = int(self.headers.get("Content-Length", "0"))
                 request_payload = json.loads(self.rfile.read(content_length))
-                if request_payload.get("password") != "stats-secret":
-                    self.send_error(401)
-                    return
-                payload = {
-                    "connectAlias": "FOCUS_HIGH",
-                    "username": request_payload["username"],
-                    "schema": request_payload["schema"],
-                    "tableName": "TEMP_OCI_FOCUS",
-                    "tableExists": True,
-                    "hasData": True,
-                    "totalRows": 125,
-                    "lastLoadDate": "2026-08-11T18:30:00",
-                    "currentMonth": "2026-08",
-                    "currentMonthCosts": [
-                        {
-                            "month": "2026-08",
-                            "billingCurrency": "EUR",
-                            "effectiveCost": "42.75",
-                        }
-                    ],
-                    "queriedAtUtc": "2026-08-11T18:31:00Z",
-                }
+                if self.path == "/api/v1/schema/stats":
+                    if request_payload.get("password") != "stats-secret":
+                        self.send_error(401)
+                        return
+                    payload = {
+                        "connectAlias": "FOCUS_HIGH",
+                        "username": request_payload["username"],
+                        "schema": request_payload["schema"],
+                        "tableName": "TEMP_OCI_FOCUS",
+                        "tableExists": True,
+                        "hasData": True,
+                        "totalRows": 125,
+                        "lastLoadDate": "2026-08-11T18:30:00",
+                        "currentMonth": "2026-08",
+                        "currentMonthCosts": [
+                            {
+                                "month": "2026-08",
+                                "billingCurrency": "EUR",
+                                "effectiveCost": "42.75",
+                            }
+                        ],
+                        "queriedAtUtc": "2026-08-11T18:31:00Z",
+                    }
+                else:
+                    if request_payload.get("password") != "finops-secret":
+                        self.send_error(401)
+                        return
+                    payload = {
+                        "connectAlias": "FOCUS_HIGH",
+                        "username": request_payload["username"],
+                        "schema": request_payload["schema"],
+                        "tableName": "TEMP_OCI_FOCUS",
+                        "tableExists": True,
+                        "lastLoadedDate": "2026-08-11T18:30:00",
+                        "lastChargeDate": "2026-08-10",
+                        "yearToDateStart": "2026-01-01",
+                        "monthlyCosts": [
+                            {
+                                "month": "2026-07",
+                                "billingCurrency": "EUR",
+                                "effectiveCost": "100.00",
+                            },
+                            {
+                                "month": "2026-08",
+                                "billingCurrency": "EUR",
+                                "effectiveCost": "42.75",
+                            },
+                        ],
+                        "yearToDateCosts": [
+                            {
+                                "billingCurrency": "EUR",
+                                "effectiveCost": "142.75",
+                            }
+                        ],
+                        "anomalies": [
+                            {
+                                "dimensionType": "TOTAL",
+                                "dimensionValue": "(all costs)",
+                                "month": "2026-07",
+                                "billingCurrency": "EUR",
+                                "effectiveCost": "100.00",
+                                "anomalyProbability": "0.91",
+                                "prediction": 0,
+                            }
+                        ],
+                        "forecasts": [
+                            {
+                                "createdBy": "finops@example.test",
+                                "billingCurrency": "EUR",
+                                "month": month,
+                                "horizonMonths": horizon,
+                                "prediction": str(40 + horizon),
+                                "lowerBound": str(35 + horizon),
+                                "upperBound": str(45 + horizon),
+                            }
+                            for horizon, month in enumerate(
+                                [
+                                    "2026-09",
+                                    "2026-10",
+                                    "2026-11",
+                                    "2026-12",
+                                    "2027-01",
+                                    "2027-02",
+                                ],
+                                start=1,
+                            )
+                        ],
+                        "mostExpensiveUser": "finops@example.test",
+                        "mostExpensiveCost": "142.75",
+                        "mostExpensiveCurrency": "EUR",
+                        "oml": {
+                            "installed": True,
+                            "refreshed": False,
+                            "lastRunAtUtc": "2026-08-11T18:31:00Z",
+                            "status": "SUCCEEDED",
+                            "message": "OML output available.",
+                            "models": [
+                                "FOCUS_OML_TOTAL",
+                                "FOCUS_OML_USER_ESM",
+                            ],
+                        },
+                        "queriedAtUtc": "2026-08-11T18:31:00Z",
+                    }
                 body = json.dumps(payload).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -144,10 +228,11 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.assertIn("Execute loader", [tab.label for tab in app.tabs])
                 self.assertIn("Schema stats", [tab.label for tab in app.tabs])
                 self.assertIn("Cost analytics", [tab.label for tab in app.tabs])
+                self.assertIn("FinOps OML", [tab.label for tab in app.tabs])
                 self.assertIn("Reset interface", [button.label for button in app.button])
                 self.assertTrue(
                     any(
-                        "Installed release: 26.16.0-persistent-loader-history"
+                        "Installed release: 26.17.0-finops-oml"
                         in caption.value
                         for caption in app.caption
                     )
@@ -192,6 +277,40 @@ class StreamlitAppSmokeTests(unittest.TestCase):
                 self.assertEqual(metric_values.get("Total rows"), "125")
                 self.assertEqual(
                     metric_values.get("Last LOAD_DATE"), "2026-08-11T18:30:00"
+                )
+
+                finops_login_schema = next(
+                    checkbox
+                    for checkbox in app.checkbox
+                    if checkbox.label == "Analyze the login user's schema"
+                )
+                finops_login_schema.uncheck().run()
+                next(
+                    item
+                    for item in app.text_input
+                    if item.label == "FOCUS schema owner"
+                ).input("FOCUS_APP")
+                next(
+                    item
+                    for item in app.text_input
+                    if item.label == "FinOps database password"
+                ).input("finops-secret")
+                next(
+                    button
+                    for button in app.button
+                    if button.label == "Load FinOps analytics"
+                ).click().run()
+                self.assertEqual(len(app.exception), 0)
+                metric_values = {metric.label: metric.value for metric in app.metric}
+                self.assertEqual(
+                    metric_values.get("YTD effective cost (EUR)"), "142.75"
+                )
+                self.assertEqual(metric_values.get("Detected anomalies"), "1")
+                self.assertEqual(
+                    metric_values.get("Forecast +1 month"), "41.00 EUR"
+                )
+                self.assertEqual(
+                    metric_values.get("Forecast +6 months"), "46.00 EUR"
                 )
 
                 app.session_state["database_deployment_token"] = "opaque-test-token"

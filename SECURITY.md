@@ -42,5 +42,11 @@ Do not report suspected vulnerabilities in a public issue. Use GitHub's private 
 - Enter database passwords only in masked forms over
   the protected loopback SSH/OCI Bastion path. Never enter a private key, wallet
   content, OCI API key, or Vault secret value in the Streamlit interface.
+- The FinOps endpoint accepts database identity, schema, bounded outlier rate,
+  and explicit refresh booleans only. It never accepts SQL, table/view names,
+  model names, or arbitrary package calls. Read-only monthly/YTD queries remain
+  available without OML. A confirmed refresh can drop/recreate only the fixed
+  `FOCUS_OML_*` models and replace derived OML rows; grant package `EXECUTE`
+  only to operators authorized for that database workload.
 
 This software is provided without warranty and is not affiliated with, endorsed, certified, or supported by Oracle Corporation. Use it at your own risk.

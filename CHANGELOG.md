@@ -1,5 +1,23 @@
 # Changelog
 
+## 26.17.0-finops-oml
+
+- Added a standalone Streamlit **FinOps OML** tab with monthly effective-cost
+  plots and per-currency YTD totals from 1 January through the latest loaded
+  date.
+- Added a fixed-query Go API boundary for FinOps analytics; it rejects arbitrary
+  SQL/model names, requires explicit confirmation before model refresh, bounds
+  the expected outlier rate, and redacts submitted database passwords.
+- Added an optional idempotent OML4SQL installer with one-class SVM anomaly
+  models for total costs, services, regions, and `CreatedBy`, plus a six-step
+  exponential-smoothing forecast for the highest-cost tagged user.
+- Added 1/3/6-month forecast metrics, prediction-bound charts, strict Python API
+  response validation, Go/Python tests, uninstall support, security guidance,
+  and a complete deployment/verification/rollback runbook.
+- Expanded the root README with eight end-to-end utilization examples covering
+  tag mapping, installation, read-only charts, anomaly refresh, forecast
+  interpretation, direct SQL diagnostics, secure fixed-API use, and rollback.
+
 ## 26.16.0-persistent-loader-history
 
 - Persisted every Streamlit-started loader job as a password-free JSON snapshot

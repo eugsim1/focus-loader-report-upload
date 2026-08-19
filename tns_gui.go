@@ -158,6 +158,9 @@ func newTNSGUIHandlerWithLoaderService(
 	mux.HandleFunc("/api/v1/schema/stats", func(w http.ResponseWriter, r *http.Request) {
 		handleSchemaStats(w, r, getenv, readOracleSchemaStats)
 	})
+	mux.HandleFunc("/api/v1/analytics/finops", func(w http.ResponseWriter, r *http.Request) {
+		handleFinopsAnalytics(w, r, getenv, readOracleFinopsAnalytics)
+	})
 	mux.HandleFunc("/api/v1/schema/deploy", func(w http.ResponseWriter, r *http.Request) {
 		handleSchemaDeployment(w, r, getenv, sessions, runner, lister)
 	})

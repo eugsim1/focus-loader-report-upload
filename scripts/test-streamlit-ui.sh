@@ -34,6 +34,8 @@ curl -fsS "${FOCUSLOADER_API_URL}/api/v1/tns/aliases" -o "${work_dir}/aliases.js
 echo "[4/7] Fixed schema deployment prerequisites"
 test -x "${SQL_SCRIPTS_DIR}/deploy_focus_schema_with_sqlloader_audit.sh"
 test -x "${SQL_SCRIPTS_DIR}/run_deploy_focus_schema_with_sqlloader_audit.sh"
+test -r "${SQL_SCRIPTS_DIR}/install_finops_oml.sql"
+test -r "${SQL_SCRIPTS_DIR}/uninstall_finops_oml.sql"
 test -w "${SQL_SCRIPTS_DIR}/focus.conf"
 test -w "$(dirname "${SQL_SCRIPTS_DIR}")/focus.conf"
 command -v sqlplus >/dev/null

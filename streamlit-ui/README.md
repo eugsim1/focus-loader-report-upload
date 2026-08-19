@@ -51,6 +51,11 @@ and [Oracle Linux 8 Python guide](https://docs.oracle.com/en/operating-systems/o
 - A **Cost analytics** tab that refreshes monthly `EFFECTIVE_COST` totals and
   the unique `SERVICE_NAME` list while committed loader rows become visible.
   Zero rows produce empty analytics and never prevent the loader from starting.
+- A standalone **FinOps OML** tab with a monthly cost chart, per-currency YTD
+  totals through the last loaded date, optional one-class SVM anomalies for
+  total cost/service/region/`CreatedBy`, and a six-month exponential-smoothing
+  forecast for the most expensive tagged user. Model rebuilds require explicit
+  confirmation; monthly/YTD charts work without OML.
 - A **Schema stats** tab that checks a validated schema's fixed
   `TEMP_OCI_FOCUS` table for existence, data, total rows, latest `LOAD_DATE`,
   and current-month cost totals grouped by billing currency.
@@ -162,7 +167,7 @@ Example:
 ```json
 {
   "status": "ok",
-  "version": "26.16.0-persistent-loader-history"
+  "version": "26.17.0-finops-oml"
 }
 ```
 
@@ -342,6 +347,17 @@ contains `tableExists`, `hasData`, `totalRows`, `lastLoadDate`, `currentMonth`,
 `currentMonthCosts`, and `queriedAtUtc`. Current-month costs remain separated
 by `billingCurrency`.
 
+`POST /api/v1/analytics/finops` accepts `username`, `password`, validated
+`schema`, `refreshOml`, `confirmOmlRefresh`, and an `outlierRate` from `0.001`
+through `0.25`. The first three fields select a login and fixed
+`SCHEMA.TEMP_OCI_FOCUS`; no SQL, table, view, package, or model name is accepted.
+Without refresh it runs fixed read-only monthly/YTD queries and reads saved OML
+results when installed. A rebuild runs only the fixed
+`SCHEMA.FOCUS_OML_ANALYTICS.RUN` package and is rejected unless both refresh and
+confirmation are true. Decimal database values remain JSON strings. The full
+response contains `monthlyCosts`, `yearToDateCosts`, `anomalies`, `forecasts`,
+top-user context, and OML install/run/model status.
+
 ## Oracle Linux 8 prerequisites
 
 The instructions assume:
@@ -375,7 +391,7 @@ The Streamlit service explicitly uses its own Python 3.11 virtual environment.
 ## 1. Build and install the updated Go backend
 
 The execution, cost, and schema-statistics tabs require the
-`26.16.0-persistent-loader-history` Go API and UI to be installed together.
+`26.17.0-finops-oml` Go API and UI to be installed together.
 
 ```bash
 cd /home/oracle/focus-loader-report-upload
@@ -391,7 +407,7 @@ dist/focus-loader-report-upload-linux-amd64 -version
 Expected version:
 
 ```text
-focus-loader-report-upload 26.16.0-persistent-loader-history
+focus-loader-report-upload 26.17.0-finops-oml
 ```
 
 ## 2. Verify TNS permissions
@@ -788,6 +804,26 @@ refresh. Run the check again to refresh it. The browser cannot submit SQL or a
 table name. The backend validates the schema identifier, runs fixed read-only
 queries, closes the connection, and redacts the password from errors.
 
+### FinOps OML tab
+
+1. Install the optional database objects once as the FOCUS schema owner with
+   `sql -L FOCUS_APP@FOCUS_HIGH @sql_scripts/install_finops_oml.sql`.
+2. Open **FinOps OML**, enter a database login, and either use its schema or
+   provide the owner of `TEMP_OCI_FOCUS`.
+3. Submit without selecting rebuild to read monthly cost, per-currency YTD cost
+   through the latest loaded date, and any previously saved OML output.
+4. To refresh, choose an expected outlier rate from `0.001` through `0.25`,
+   select both rebuild and confirmation, and submit. This recreates only fixed
+   `FOCUS_OML_*` models and replaces their derived output rows.
+5. Filter anomaly results between total cost, services, regions, and users from
+   the `CreatedBy` tag. Review the most expensive tagged user's six forecast
+   steps, including the emphasized 1-, 3-, and 6-month values and bounds.
+
+Currencies remain separate, and anomaly/forecast output is an analytical aid,
+not billing truth. The full privilege model, SQL verification, `CreatedBy`
+mapping, model behavior, rollback, and troubleshooting instructions are in the
+[FinOps OML guide](../docs/FINOPS_OML.md).
+
 ### Reset interface button
 
 Use **Reset interface** in the sidebar to clear forms, database authorization,
@@ -1066,7 +1102,7 @@ sudo grep '^FOCUS_API_URL' /etc/focus-loader/streamlit.env
 ```
 
 An older binary does not provide schema statistics; install the
-`26.16.0-persistent-loader-history` binary before using the current interface.
+`26.17.0-finops-oml` binary before using the current interface.
 
 ### The alias endpoint returns an error
 
@@ -1121,7 +1157,7 @@ sudo journalctl -u focus-loader-tns-gui.service -n 200 --no-pager
 ```
 
 An `ORA-01940` from an older installation means the target schema still has an
-active session. Version `26.16.0-persistent-loader-history` locks the user,
+active session. Version `26.17.0-finops-oml` locks the user,
 disconnects those sessions, and retries the drop. If it persists after upgrade,
 download the execution log and verify that the administrator can query
 `GV$SESSION` and run `ALTER SYSTEM DISCONNECT SESSION`.
